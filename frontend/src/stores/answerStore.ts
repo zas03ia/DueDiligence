@@ -7,8 +7,6 @@ interface AnswerState extends LoadingState {
   answers: Answer[]
   currentAnswer: Answer | null
   filters: AnswerFilters
-  loading: boolean
-  error?: string
   
   // Actions
   fetchProjectAnswers: (projectId: string) => Promise<void>
@@ -26,7 +24,7 @@ const initialState: Omit<AnswerState, 'fetchProjectAnswers' | 'fetchAnswer' | 'u
   answers: [],
   currentAnswer: null,
   filters: {},
-  loading: false,
+  isLoading: false,
   error: undefined,
 }
 
@@ -36,35 +34,35 @@ export const useAnswerStore = create<AnswerState>()(
       ...initialState,
 
       fetchProjectAnswers: async (projectId: string) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           const answers = await apiClient.getProjectAnswers(projectId)
-          set({ answers, loading: false })
+          set({ answers, isLoading: false })
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to fetch answers',
-            loading: false 
+            isLoading: false 
           })
         }
       },
 
       fetchAnswer: async (answerId: string) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           const answer = await apiClient.getAnswer(answerId)
-          set({ currentAnswer: answer, loading: false })
+          set({ currentAnswer: answer, isLoading: false })
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to fetch answer',
-            loading: false 
+            isLoading: false 
           })
         }
       },
 
       updateAnswer: async (answerId: string, answerData: Partial<Answer>) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           const updatedAnswer = await apiClient.updateAnswer(answerId, answerData)
@@ -79,26 +77,26 @@ export const useAnswerStore = create<AnswerState>()(
             answers: state.answers.map(a => 
               a.id === answerId ? updatedAnswer : a
             ),
-            loading: false
+            isLoading: false
           }))
           
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to update answer',
-            loading: false 
+            isLoading: false 
           })
         }
       },
 
       confirmAnswer: async (answerId: string) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           await apiClient.confirmAnswer(answerId)
           
           // Update in local state
           if (get().currentAnswer?.id === answerId) {
-            set({ currentAnswer: { ...get().currentAnswer, status: 'CONFIRMED' } })
+            set({ currentAnswer: { ...get().currentAnswer!, status: 'CONFIRMED' } })
           }
           
           // Update in answers array
@@ -106,26 +104,26 @@ export const useAnswerStore = create<AnswerState>()(
             answers: state.answers.map(a => 
               a.id === answerId ? { ...a, status: 'CONFIRMED' } : a
             ),
-            loading: false
+            isLoading: false
           }))
           
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to confirm answer',
-            loading: false 
+            isLoading: false 
           })
         }
       },
 
       rejectAnswer: async (answerId: string, reason?: string) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           await apiClient.rejectAnswer(answerId, reason)
           
           // Update in local state
           if (get().currentAnswer?.id === answerId) {
-            set({ currentAnswer: { ...get().currentAnswer, status: 'REJECTED' } })
+            set({ currentAnswer: { ...get().currentAnswer!, status: 'REJECTED' } })
           }
           
           // Update in answers array
@@ -133,19 +131,19 @@ export const useAnswerStore = create<AnswerState>()(
             answers: state.answers.map(a => 
               a.id === answerId ? { ...a, status: 'REJECTED' } : a
             ),
-            loading: false
+            isLoading: false
           }))
           
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to reject answer',
-            loading: false 
+            isLoading: false 
           })
         }
       },
 
       regenerateAnswer: async (answerId: string) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           const result = await apiClient.regenerateAnswer(answerId)
@@ -160,13 +158,13 @@ export const useAnswerStore = create<AnswerState>()(
             answers: state.answers.map(a => 
               a.id === answerId ? result.result : a
             ),
-            loading: false
+            isLoading: false
           }))
           
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to regenerate answer',
-            loading: false 
+            isLoading: false 
           })
         }
       },
@@ -197,5 +195,5 @@ export const useAnswerStore = create<AnswerState>()(
 export const useAnswers = () => useAnswerStore(state => state.answers)
 export const useCurrentAnswer = () => useAnswerStore(state => state.currentAnswer)
 export const useAnswerFilters = () => useAnswerStore(state => state.filters)
-export const useAnswerLoading = () => useAnswerStore(state => state.loading)
+export const useAnswerLoading = () => useAnswerStore(state => state.isLoading)
 export const useAnswerError = () => useAnswerStore(state => state.error)

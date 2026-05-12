@@ -95,6 +95,7 @@ export interface EvaluationResult {
 export interface QuestionEvaluation {
   answer_id: string
   question_id: string
+  question_text: string
   ai_answer: string
   manual_answer?: string
   ground_truth: string

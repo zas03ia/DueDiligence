@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import { Document, LoadingState, DocumentFilters, SearchResult } from '../types'
+import { Document, LoadingState, DocumentFilters, SearchResult, ChunkingStrategy } from '../types'
 import { apiClient } from '../services/api'
 
 interface DocumentState extends LoadingState {
@@ -15,9 +15,9 @@ interface DocumentState extends LoadingState {
   fetchDocuments: () => Promise<void>
   fetchDocument: (id: string) => Promise<void>
   fetchDocumentContent: (id: string, limit?: number) => Promise<void>
-  uploadDocument: (file: File, autoIndex?: boolean, chunkingStrategy?: string) => Promise<Document>
-  indexDocument: (id: string, chunkingStrategy?: string) => Promise<void>
-  reindexDocument: (id: string, chunkingStrategy?: string) => Promise<void>
+  uploadDocument: (file: File, autoIndex?: boolean, chunkingStrategy?: ChunkingStrategy) => Promise<Document>
+  indexDocument: (id: string, chunkingStrategy?: ChunkingStrategy) => Promise<void>
+  reindexDocument: (id: string, chunkingStrategy?: ChunkingStrategy) => Promise<void>
   deleteDocument: (id: string) => Promise<void>
   searchDocuments: (query: string, documentIds?: string[]) => Promise<void>
   downloadDocument: (id: string) => Promise<void>
@@ -86,7 +86,7 @@ export const useDocumentStore = create<DocumentState>()(
         }
       },
 
-      uploadDocument: async (file: File, autoIndex = true, chunkingStrategy = 'PARAGRAPH') => {
+      uploadDocument: async (file: File, autoIndex = true, chunkingStrategy: ChunkingStrategy = 'PARAGRAPH') => {
         set({ isLoading: true, error: undefined, uploadProgress: 0 })
         
         try {
@@ -114,7 +114,7 @@ export const useDocumentStore = create<DocumentState>()(
         }
       },
 
-      indexDocument: async (id: string, chunkingStrategy = 'PARAGRAPH') => {
+      indexDocument: async (id: string, chunkingStrategy: ChunkingStrategy = 'PARAGRAPH') => {
         set({ isLoading: true, error: undefined })
         
         try {
@@ -133,7 +133,7 @@ export const useDocumentStore = create<DocumentState>()(
         }
       },
 
-      reindexDocument: async (id: string, chunkingStrategy = 'PARAGRAPH') => {
+      reindexDocument: async (id: string, chunkingStrategy: ChunkingStrategy = 'PARAGRAPH') => {
         set({ isLoading: true, error: undefined })
         
         try {
@@ -200,16 +200,16 @@ export const useDocumentStore = create<DocumentState>()(
           
           // Create download link
           const url = window.URL.createObjectURL(blob)
-          const link = document.createElement('a')
+          const link = window.document.createElement('a')
           link.href = url
           
           // Get filename from current document or fetch it
-          const document = get().currentDocument || await apiClient.getDocument(id)
-          link.download = document.filename
+          const documentData = get().currentDocument || await apiClient.getDocument(id)
+          link.download = documentData.filename
           
-          document.body.appendChild(link)
+          window.document.body.appendChild(link)
           link.click()
-          document.body.removeChild(link)
+          window.document.body.removeChild(link)
           window.URL.revokeObjectURL(url)
           
           set({ isLoading: false })

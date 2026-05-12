@@ -5,8 +5,6 @@ import { apiClient } from '../services/api'
 
 interface EvaluationState extends LoadingState {
   currentEvaluation: EvaluationResult | null
-  loading: boolean
-  error?: string
   
   // Actions
   evaluateAnswers: (projectId: string, groundTruthAnswers: Record<string, string>) => Promise<void>
@@ -16,7 +14,7 @@ interface EvaluationState extends LoadingState {
 
 const initialState: Omit<EvaluationState, 'evaluateAnswers' | 'setCurrentEvaluation' | 'reset'> = {
   currentEvaluation: null,
-  loading: false,
+  isLoading: false,
   error: undefined,
 }
 
@@ -26,15 +24,15 @@ export const useEvaluationStore = create<EvaluationState>()(
       ...initialState,
 
       evaluateAnswers: async (projectId: string, groundTruthAnswers: Record<string, string>) => {
-        set({ loading: true, error: undefined })
+        set({ isLoading: true, error: undefined })
         
         try {
           const evaluation = await apiClient.evaluateAnswers(projectId, groundTruthAnswers)
-          set({ currentEvaluation: evaluation, loading: false })
+          set({ currentEvaluation: evaluation, isLoading: false })
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to evaluate answers',
-            loading: false 
+            isLoading: false 
           })
         }
       },
@@ -55,5 +53,5 @@ export const useEvaluationStore = create<EvaluationState>()(
 
 // Selectors
 export const useCurrentEvaluation = () => useEvaluationStore(state => state.currentEvaluation)
-export const useEvaluationLoading = () => useEvaluationStore(state => state.loading)
+export const useEvaluationLoading = () => useEvaluationStore(state => state.isLoading)
 export const useEvaluationError = () => useEvaluationStore(state => state.error)

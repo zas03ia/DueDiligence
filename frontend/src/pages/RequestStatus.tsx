@@ -1,338 +1,213 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useProjectStore, useProjectLoading, useProjectError } from '@/stores/projectStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { formatDate, getStatusColor } from '@/lib/utils'
 import { Request } from '@/types'
 
 export default function RequestStatus() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [selectedRequest, setSelectedRequest] = useState<string | null>(null)
+  
+  // FIXED: selectedRequest should hold the object to access properties in the modal
+  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
+  const [requests, setRequests] = useState<Request[]>([])
   
   const { 
     currentProject,
-    loading: projectLoading,
-    error: projectError 
+    isLoading: projectLoading,
+    error: projectError,
+    fetchProjectDetails // Added from store
   } = useProjectStore()
 
-  const [requests, setRequests] = useState<Request[]>([])
+  // Memoized fetch to prevent unnecessary re-renders
+  const loadData = useCallback(async () => {
+    if (!id) return
+    try {
+      // In a real app: const data = await api.getRequests(id); setRequests(data);
+      console.log('Fetching requests for project:', id)
+    } catch (error) {
+      console.error('Fetch failed:', error)
+    }
+  }, [id])
 
   useEffect(() => {
     if (id) {
       fetchProjectDetails(id)
+      loadData()
     }
-  }, [id, fetchProjectDetails])
+  }, [id, fetchProjectDetails, loadData])
 
+  // Auto-refresh logic
   useEffect(() => {
+    let interval: NodeJS.Timeout
     if (autoRefresh) {
-      const interval = setInterval(() => {
-        // In a real app, this would fetch requests from API
-        console.log('Auto-refreshing requests...')
+      interval = setInterval(() => {
+        loadData()
       }, 5000)
-      
-      return () => clearInterval(interval)
     }
-    
     return () => {
-      setAutoRefresh(false)
+      if (interval) clearInterval(interval)
     }
-  }, [autoRefresh])
-
-  const handleRefresh = async () => {
-    try {
-      // In a real app, this would fetch requests from API
-      console.log('Refreshing requests...')
-    } catch (error) {
-      console.error('Refresh failed:', error)
-    }
-  }
+  }, [autoRefresh, loadData])
 
   const getStatusIcon = (status: string) => {
+    const iconClass = "w-4 h-4"
     switch (status) {
-      case 'PENDING':
-        return <Clock className="w-4 h-4 text-yellow-600" />
-      case 'RUNNING':
-        return <RefreshCw className="w-4 h-4 text-blue-600" />
-      case 'COMPLETED':
-        return <CheckCircle className="w-4 h-4 text-green-600" />
-      case 'FAILED':
-        return <XCircle className="w-4 h-4 text-red-600" />
-      default:
-        return <Clock className="w-4 h-4 text-gray-600" />
+      case 'PENDING': return <Clock className={`${iconClass} text-yellow-600`} />
+      case 'RUNNING': return <RefreshCw className={`${iconClass} text-blue-600 animate-spin`} />
+      case 'COMPLETED': return <CheckCircle className={`${iconClass} text-green-600`} />
+      case 'FAILED': return <XCircle className={`${iconClass} text-red-600`} />
+      default: return <Clock className={`${iconClass} text-gray-600`} />
     }
   }
 
-  const getProgressPercentage = (request: Request) => {
-    return Math.round((request.progress || 0) * 100)
-  }
+  const getProgressPercentage = (request: Request) => Math.round((request.progress || 0) * 100)
 
-  if (projectLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg">Loading request status...</div>
-      </div>
-    )
-  }
-
-  if (projectError) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-red-600">Error: {projectError}</div>
-      </div>
-    )
-  }
-
-  if (!currentProject) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-600">Project not found</div>
-      </div>
-    )
-  }
+  if (projectLoading) return <div className="flex items-center justify-center h-64 text-lg">Loading...</div>
+  if (projectError) return <div className="flex items-center justify-center h-64 text-red-600">Error: {projectError}</div>
+  if (!currentProject) return <div className="flex items-center justify-center h-64 text-gray-600">Project not found</div>
 
   return (
-    <div className="container mx-auto py-8">
+    <div className="container mx-auto py-8 px-4">
       {/* Header */}
-      <div className="mb-6">
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={() => navigate('/projects')}
-          className="mb-4"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Projects
-        </Button>
+      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/projects')} className="mb-2 p-0">
+            <ArrowLeft className="w-4 h-4 mr-2" /> Back to Projects
+          </Button>
+          <h1 className="text-3xl font-bold text-gray-900">Request Status</h1>
+          <p className="text-gray-600">Project: <strong>{currentProject.name}</strong></p>
+        </div>
         
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Request Status</h1>
-            <p className="text-gray-600 mt-1">
-              Project: {currentProject.name}
-            </p>
-          </div>
-          
-          <div className="flex gap-2">
-            <Button onClick={handleRefresh} disabled={autoRefresh}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`} />
-              {autoRefresh ? 'Stop Refresh' : 'Refresh'}
-            </Button>
-            <Button 
-              variant="outline" 
-              onClick={() => setAutoRefresh(!autoRefresh)}
-            >
-              {autoRefresh ? 'Manual' : 'Auto'} Refresh
-            </Button>
-          </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setAutoRefresh(!autoRefresh)} className={autoRefresh ? 'border-blue-500 text-blue-600' : ''}>
+            {autoRefresh ? 'Stop Auto-refresh' : 'Enable Auto-refresh'}
+          </Button>
+          <Button onClick={loadData} disabled={autoRefresh}>
+            <RefreshCw className="w-4 h-4 mr-2" /> Refresh Now
+          </Button>
         </div>
       </div>
 
-      {/* Request Stats */}
-      <div className="mb-8 grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">Request Statistics</h3>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-600">Total Requests:</span>
-              <span className="text-lg font-semibold">{requests.length}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-600">Pending:</span>
-              <span className="text-lg font-semibold text-yellow-600">
-                {requests.filter(r => r.status === 'PENDING').length}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-600">Running:</span>
-              <span className="text-lg font-semibold text-blue-600">
-                {requests.filter(r => r.status === 'RUNNING').length}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-600">Completed:</span>
-              <span className="text-lg font-semibold text-green-600">
-                {requests.filter(r => r.status === 'COMPLETED').length}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-600">Failed:</span>
-              <span className="text-lg font-semibold text-red-600">
-                {requests.filter(r => r.status === 'FAILED').length}
-              </span>
+      <hr className="mb-8" />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Column: Stats */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="bg-white rounded-xl border p-6 shadow-sm">
+            <h3 className="text-lg font-semibold mb-4">Statistics</h3>
+            <div className="space-y-3">
+              {[
+                { label: 'Total', value: requests.length, color: 'text-gray-900' },
+                { label: 'Running', value: requests.filter(r => r.status === 'RUNNING').length, color: 'text-blue-600' },
+                { label: 'Completed', value: requests.filter(r => r.status === 'COMPLETED').length, color: 'text-green-600' },
+                { label: 'Failed', value: requests.filter(r => r.status === 'FAILED').length, color: 'text-red-600' },
+              ].map(stat => (
+                <div key={stat.label} className="flex justify-between items-center border-b pb-2 last:border-0">
+                  <span className="text-sm text-gray-600">{stat.label}</span>
+                  <span className={`text-lg font-bold ${stat.color}`}>{stat.value}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">Recent Activity</h3>
-          <div className="space-y-2">
-            {requests.slice(0, 5).map((request) => (
-              <div key={request.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
-                   onClick={() => setSelectedRequest(request.id)}>
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      {getStatusIcon(request.status)}
-                      <span className="text-sm font-medium">{request.request_type}</span>
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {formatDate(request.created_at)}
-                    </div>
-                  </div>
+        {/* Right Column: List */}
+        <div className="lg:col-span-2 space-y-4">
+          {requests.map((request) => (
+            <div 
+              key={request.id} 
+              className="bg-white border rounded-lg p-4 hover:border-blue-300 transition-all cursor-pointer shadow-sm"
+              onClick={() => setSelectedRequest(request)}
+            >
+              <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-3">
+                  {getStatusIcon(request.status)}
+                  <span className="font-semibold text-gray-800">{request.request_type}</span>
                 </div>
-                
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(request.status)}`}>
-                      {request.status}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    {request.progress !== undefined && (
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-blue-600 h-2 text-white text-center leading-relaxed"
-                          style={{ width: `${getProgressPercentage(request)}%` }}
-                        >
-                          {getProgressPercentage(request)}%
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${getStatusColor(request.status)}`}>
+                  {request.status}
+                </span>
               </div>
+
+              {request.status === 'RUNNING' && (
+                <div className="mb-3">
+                  <div className="flex justify-between text-xs mb-1">
+                    <span>Progress</span>
+                    <span>{getProgressPercentage(request)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-1.5">
+                    <div 
+                      className="bg-blue-600 h-1.5 rounded-full transition-all duration-500" 
+                      style={{ width: `${getProgressPercentage(request)}%` }} 
+                    />
+                  </div>
+                </div>
+              )}
               
-              <div className="text-sm text-gray-600 mt-2">
-                {request.result_data && (
-                  <div>
-                    <span className="font-medium">Result:</span>
-                    <span className="ml-2">
-                      {typeof request.result_data === 'object' 
-                        ? JSON.stringify(request.result_data).substring(0, 100) + '...'
-                        : request.result_data
-                      }
-                    </span>
-                  </div>
-                )}
-                
-                {request.error_message && (
-                  <div className="text-red-600 mt-2">
-                    <span className="font-medium">Error:</span>
-                    <span className="ml-2">{request.error_message}</span>
-                  </div>
-                )}
+              <div className="text-xs text-gray-500 flex justify-between">
+                <span>ID: {request.id.substring(0, 8)}...</span>
+                <span>{formatDate(request.created_at)}</span>
               </div>
             </div>
           ))}
+
+          {requests.length === 0 && (
+            <div className="text-center py-20 bg-gray-50 rounded-xl border-2 border-dashed">
+              <p className="text-gray-500">No active requests found for this project.</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Selected Request Details */}
+      {/* Modal Overlay */}
       {selectedRequest && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl mx-4">
-            <div className="flex justify-between items-start mb-4">
-              <h3 className="text-xl font-semibold">Request Details</h3>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setSelectedRequest(null)}
-              >
-                ×
-              </Button>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+            <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+              <h3 className="text-xl font-bold">Request Details</h3>
+              <button onClick={() => setSelectedRequest(null)} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
             </div>
             
-            <div className="space-y-4">
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Request ID:</span>
-                <span className="text-sm font-mono">{selectedRequest.id}</span>
+            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-gray-500">Type</p>
+                  <p className="font-medium">{selectedRequest.request_type}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Status</p>
+                  <p className={`font-bold ${getStatusColor(selectedRequest.status)}`}>{selectedRequest.status}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-gray-500">Request ID</p>
+                  <p className="font-mono text-xs bg-gray-100 p-1 rounded">{selectedRequest.id}</p>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Type:</span>
-                <span className="text-sm font-medium">{selectedRequest.request_type}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Status:</span>
-                <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(selectedRequest.status)}`}>
-                  {selectedRequest.status}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Progress:</span>
-                <span className="text-sm font-medium">
-                  {selectedRequest.progress !== undefined ? `${getProgressPercentage(selectedRequest)}%` : 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Created:</span>
-                <span className="text-sm text-gray-600">{formatDate(selectedRequest.created_at)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Updated:</span>
-                <span className="text-sm text-gray-600">{formatDate(selectedRequest.updated_at)}</span>
-              </div>
-            </div>
-            
-            {selectedRequest.project_id && (
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Project ID:</span>
-                <span className="text-sm font-mono">{selectedRequest.project_id}</span>
-              </div>
-            )}
-            
-            {selectedRequest.document_id && (
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Document ID:</span>
-                <span className="text-sm font-mono">{selectedRequest.document_id}</span>
-              </div>
-            )}
-            
-            {selectedRequest.result_data && (
-              <div>
-                <div className="text-sm font-medium text-gray-700 mb-2">Result:</div>
-                <div className="bg-gray-50 rounded p-3 text-sm">
-                  <pre className="whitespace-pre-wrap">
+
+              {selectedRequest.result_data && (
+                <div className="mt-4">
+                  <p className="text-sm font-semibold mb-2">Result Data</p>
+                  <pre className="bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto">
                     {JSON.stringify(selectedRequest.result_data, null, 2)}
                   </pre>
                 </div>
-              </div>
-            )}
-            
-            {selectedRequest.error_message && (
-              <div>
-                <div className="text-sm font-medium text-red-600 mb-2">Error:</div>
-                <div className="bg-red-50 rounded p-3 text-sm text-red-600">
-                  {selectedRequest.error_message}
-                </div>
-              </div>
-            )}
-            
-            <div className="mt-6 flex gap-2">
-              <Button 
-                variant="outline"
-                onClick={() => setSelectedRequest(null)}
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+              )}
 
-      {/* Empty State */}
-      {requests.length === 0 && (
-        <div className="text-center py-12">
-          <div className="text-gray-500">
-            <div className="text-lg mb-4">No requests found</div>
-            <p className="text-sm">
-              Requests will appear here when you start operations like document indexing or answer generation.
-            </p>
-            <Button onClick={() => navigate('/projects')}>
-              Go to Projects
-            </Button>
+              {selectedRequest.error_message && (
+                <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
+                  <p className="text-red-700 text-sm font-bold">Error Message</p>
+                  <p className="text-red-600 text-sm">{selectedRequest.error_message}</p>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 bg-gray-50 border-t flex justify-end">
+              <Button onClick={() => setSelectedRequest(null)}>Close</Button>
+            </div>
           </div>
         </div>
       )}

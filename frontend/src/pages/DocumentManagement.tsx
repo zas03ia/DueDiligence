@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Upload, FileText, Download, Search, Plus, Eye, Trash2, RefreshCw } from 'lucide-react'
+import { Upload, FileText, Download, Search, Plus, Eye, Trash2, RefreshCw, ArrowLeft, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useDocumentStore, useDocumentLoading, useDocumentError } from '@/stores/documentStore'
 import { formatDate, formatFileSize, getStatusColor } from '@/lib/utils'
-import { DocumentType } from '@/types'
+import { DocumentType, Document } from '@/types'
 
 export default function DocumentManagement() {
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const navigate = useNavigate()
+  const [selectedFile, setSelectedFile] = useState<Document | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [searchTerm, setSearchTerm] = useState('')
   const [fileTypeFilter, setFileTypeFilter] = useState<string>('')
@@ -18,14 +19,14 @@ export default function DocumentManagement() {
     indexDocument, 
     deleteDocument, 
     downloadDocument,
-    loading: documentLoading,
+    fetchDocuments,
+    isLoading: documentLoading,
     error: documentError 
   } = useDocumentStore()
 
   useEffect(() => {
-    // Fetch documents on component mount
-    // This would typically call fetchDocuments()
-  }, [])
+    fetchDocuments()
+  }, [fetchDocuments])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -34,7 +35,7 @@ export default function DocumentManagement() {
     try {
       setUploadProgress(0)
       const document = await uploadDocument(file, true, 'PARAGRAPH')
-      setSelectedFile(document.id)
+      setSelectedFile(document)
       
       // Reset upload progress
       setTimeout(() => setUploadProgress(100), 500)
@@ -244,7 +245,7 @@ export default function DocumentManagement() {
                 <tr 
                   key={document.id} 
                   className="hover:bg-gray-50 cursor-pointer"
-                  onClick={() => setSelectedFile(document.id)}
+                  onClick={() => setSelectedFile(documents.find(d => d.id === document.id) || null)}
                 >
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
@@ -327,29 +328,29 @@ export default function DocumentManagement() {
               <dl className="space-y-1">
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Filename:</dt>
-                  <dd className="text-sm text-gray-900">{selectedFile.filename}</dd>
+                  <dd className="text-sm text-gray-900">{selectedFile?.filename || 'N/A'}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Type:</dt>
-                  <dd className="text-sm text-gray-900">{selectedFile.file_type}</dd>
+                  <dd className="text-sm text-gray-900">{selectedFile?.file_type || 'N/A'}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Size:</dt>
-                  <dd className="text-sm text-gray-900">{formatFileSize(selectedFile.file_size)}</dd>
+                  <dd className="text-sm text-gray-900">{formatFileSize(selectedFile?.file_size || 0)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Created:</dt>
-                  <dd className="text-sm text-gray-900">{formatDate(selectedFile.created_at)}</dd>
+                  <dd className="text-sm text-gray-900">{formatDate(selectedFile?.created_at || new Date())}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Updated:</dt>
-                  <dd className="text-sm text-gray-900">{formatDate(selectedFile.updated_at)}</dd>
+                  <dd className="text-sm text-gray-900">{formatDate(selectedFile?.updated_at || new Date())}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Indexed:</dt>
                   <dd className="text-sm text-gray-900">
-                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(selectedFile.indexed ? 'CONFIRMED' : 'PENDING')}`}>
-                      {selectedFile.indexed ? 'Yes' : 'No'}
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(selectedFile?.indexed ? 'CONFIRMED' : 'PENDING')}`}>
+                      {selectedFile?.indexed ? 'Yes' : 'No'}
                     </span>
                   </dd>
                 </div>
@@ -362,7 +363,7 @@ export default function DocumentManagement() {
                 <div className="flex justify-between">
                   <dt className="text-sm font-medium text-gray-500">Status:</dt>
                   <dd className="text-sm text-gray-900">
-                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor('INDEXING'}`}>
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor('INDEXING')}`}>
                       Indexing...
                     </span>
                   </dd>
@@ -389,16 +390,16 @@ export default function DocumentManagement() {
                 <Button 
                   size="sm" 
                   variant="outline"
-                  onClick={() => handleIndexDocument(selectedFile.id)}
-                  disabled={!selectedFile.indexed || documentLoading}
+                  onClick={() => handleIndexDocument(selectedFile?.id || '')}
+                  disabled={!selectedFile?.indexed || documentLoading}
                 >
                   <RefreshCw className="w-3 h-3 mr-1" />
-                  {selectedFile.indexed ? 'Re-Index' : 'Index'}
+                  {selectedFile?.indexed ? 'Re-Index' : 'Index'}
                 </Button>
                 <Button 
                   size="sm" 
                   variant="outline"
-                  onClick={() => handleDownloadDocument(selectedFile.id)}
+                  onClick={() => handleDownloadDocument(selectedFile?.id || '')}
                   disabled={documentLoading}
                 >
                   <Download className="w-3 h-3 mr-1" />
@@ -407,7 +408,7 @@ export default function DocumentManagement() {
                 <Button 
                   size="sm" 
                   variant="outline"
-                  onClick={() => handleDeleteDocument(selectedFile.id)}
+                  onClick={() => handleDeleteDocument(selectedFile?.id || '')}
                   disabled={documentLoading}
                 >
                   <Trash2 className="w-3 h-3 mr-1" />

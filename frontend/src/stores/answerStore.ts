@@ -1,0 +1,201 @@
+import { create } from 'zustand'
+import { devtools } from 'zustand/middleware'
+import { Answer, LoadingState, AnswerFilters } from '../types'
+import { apiClient } from '../services/api'
+
+interface AnswerState extends LoadingState {
+  answers: Answer[]
+  currentAnswer: Answer | null
+  filters: AnswerFilters
+  loading: boolean
+  error?: string
+  
+  // Actions
+  fetchProjectAnswers: (projectId: string) => Promise<void>
+  fetchAnswer: (answerId: string) => Promise<void>
+  updateAnswer: (answerId: string, answerData: Partial<Answer>) => Promise<void>
+  confirmAnswer: (answerId: string) => Promise<void>
+  rejectAnswer: (answerId: string, reason?: string) => Promise<void>
+  regenerateAnswer: (answerId: string) => Promise<void>
+  setFilters: (filters: Partial<AnswerFilters>) => void
+  clearCurrentAnswer: () => void
+  reset: () => void
+}
+
+const initialState: Omit<AnswerState, 'fetchProjectAnswers' | 'fetchAnswer' | 'updateAnswer' | 'confirmAnswer' | 'rejectAnswer' | 'regenerateAnswer' | 'setFilters' | 'clearCurrentAnswer' | 'reset'> = {
+  answers: [],
+  currentAnswer: null,
+  filters: {},
+  loading: false,
+  error: undefined,
+}
+
+export const useAnswerStore = create<AnswerState>()(
+  devtools(
+    (set, get) => ({
+      ...initialState,
+
+      fetchProjectAnswers: async (projectId: string) => {
+        set({ loading: true, error: undefined })
+        
+        try {
+          const answers = await apiClient.getProjectAnswers(projectId)
+          set({ answers, loading: false })
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to fetch answers',
+            loading: false 
+          })
+        }
+      },
+
+      fetchAnswer: async (answerId: string) => {
+        set({ loading: true, error: undefined })
+        
+        try {
+          const answer = await apiClient.getAnswer(answerId)
+          set({ currentAnswer: answer, loading: false })
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to fetch answer',
+            loading: false 
+          })
+        }
+      },
+
+      updateAnswer: async (answerId: string, answerData: Partial<Answer>) => {
+        set({ loading: true, error: undefined })
+        
+        try {
+          const updatedAnswer = await apiClient.updateAnswer(answerId, answerData)
+          
+          // Update in local state
+          if (get().currentAnswer?.id === answerId) {
+            set({ currentAnswer: updatedAnswer })
+          }
+          
+          // Update in answers array
+          set(state => ({
+            answers: state.answers.map(a => 
+              a.id === answerId ? updatedAnswer : a
+            ),
+            loading: false
+          }))
+          
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to update answer',
+            loading: false 
+          })
+        }
+      },
+
+      confirmAnswer: async (answerId: string) => {
+        set({ loading: true, error: undefined })
+        
+        try {
+          await apiClient.confirmAnswer(answerId)
+          
+          // Update in local state
+          if (get().currentAnswer?.id === answerId) {
+            set({ currentAnswer: { ...get().currentAnswer, status: 'CONFIRMED' } })
+          }
+          
+          // Update in answers array
+          set(state => ({
+            answers: state.answers.map(a => 
+              a.id === answerId ? { ...a, status: 'CONFIRMED' } : a
+            ),
+            loading: false
+          }))
+          
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to confirm answer',
+            loading: false 
+          })
+        }
+      },
+
+      rejectAnswer: async (answerId: string, reason?: string) => {
+        set({ loading: true, error: undefined })
+        
+        try {
+          await apiClient.rejectAnswer(answerId, reason)
+          
+          // Update in local state
+          if (get().currentAnswer?.id === answerId) {
+            set({ currentAnswer: { ...get().currentAnswer, status: 'REJECTED' } })
+          }
+          
+          // Update in answers array
+          set(state => ({
+            answers: state.answers.map(a => 
+              a.id === answerId ? { ...a, status: 'REJECTED' } : a
+            ),
+            loading: false
+          }))
+          
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to reject answer',
+            loading: false 
+          })
+        }
+      },
+
+      regenerateAnswer: async (answerId: string) => {
+        set({ loading: true, error: undefined })
+        
+        try {
+          const result = await apiClient.regenerateAnswer(answerId)
+          
+          // Update in local state
+          if (get().currentAnswer?.id === answerId) {
+            set({ currentAnswer: result.result })
+          }
+          
+          // Update in answers array
+          set(state => ({
+            answers: state.answers.map(a => 
+              a.id === answerId ? result.result : a
+            ),
+            loading: false
+          }))
+          
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to regenerate answer',
+            loading: false 
+          })
+        }
+      },
+
+      setFilters: (filters: Partial<AnswerFilters>) => {
+        set(state => ({
+          filters: { ...state.filters, ...filters }
+        }))
+      },
+
+      clearCurrentAnswer: () => {
+        set({ 
+          currentAnswer: null 
+        })
+      },
+
+      reset: () => {
+        set(initialState)
+      },
+    }),
+    {
+      name: 'answer-store',
+    }
+  )
+)
+
+// Selectors
+export const useAnswers = () => useAnswerStore(state => state.answers)
+export const useCurrentAnswer = () => useAnswerStore(state => state.currentAnswer)
+export const useAnswerFilters = () => useAnswerStore(state => state.filters)
+export const useAnswerLoading = () => useAnswerStore(state => state.loading)
+export const useAnswerError = () => useAnswerStore(state => state.error)

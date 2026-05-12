@@ -1,0 +1,383 @@
+import uuid
+from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+from src.models.db_models import Project, Question, Answer, Document
+from src.models.enums import AnswerStatus, QuestionType
+from src.services.llm_service import llm_service
+from src.indexing.vector_index import vector_index_manager
+from src.indexing.indexing_pipeline import IndexingPipeline
+from src.utils.exceptions import GenerationError
+import time
+
+
+class AnswerGenerationService:
+    """Service for generating answers with citations and confidence scores"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+        self.indexing_pipeline = IndexingPipeline(db)
+    
+    def generate_single_answer(self, project_id: str, question_id: str, 
+                             use_cached: bool = True) -> Dict[str, Any]:
+        """Generate answer for a single question"""
+        try:
+            # Get project and question
+            project = self.db.query(Project).filter(Project.id == project_id).first()
+            question = self.db.query(Question).filter(Question.id == question_id).first()
+            
+            if not project or not question:
+                raise GenerationError("Project or question not found")
+            
+            # Check if answer already exists
+            existing_answer = self.db.query(Answer).filter(
+                Answer.project_id == project_id,
+                Answer.question_id == question_id
+            ).first()
+            
+            if existing_answer and use_cached:
+                return self._format_answer_response(existing_answer)
+            
+            # Get relevant documents for the project
+            document_ids = self._get_project_document_ids(project)
+            if not document_ids:
+                return self._create_no_context_answer(project_id, question_id, question)
+            
+            # Search for relevant chunks
+            relevant_chunks = vector_index_manager.search_across_documents(
+                document_ids=document_ids,
+                query_text=question.text,
+                top_k=5
+            )
+            
+            if not relevant_chunks:
+                return self._create_no_context_answer(project_id, question_id, question)
+            
+            # Generate answer with citations
+            llm_response = llm_service.generate_single_answer_with_citations(
+                question=question.text,
+                relevant_chunks=relevant_chunks
+            )
+            
+            # Evaluate answer quality
+            evaluation = llm_service.evaluate_answer_quality(
+                question=question.text,
+                answer=llm_response["answer_text"]
+            )
+            
+            # Create or update answer record
+            answer_data = {
+                "answer_text": llm_response["answer_text"],
+                "confidence_score": evaluation.get("confidence_score", llm_response.get("confidence_score", 0.5)),
+                "is_answerable": evaluation.get("is_answerable", llm_response.get("is_answerable", True)),
+                "citations": llm_response.get("citations", []),
+                "status": AnswerStatus.PENDING
+            }
+            
+            if existing_answer:
+                # Update existing answer
+                for key, value in answer_data.items():
+                    setattr(existing_answer, key, value)
+                answer = existing_answer
+            else:
+                # Create new answer
+                answer = Answer(
+                    project_id=project_id,
+                    question_id=question_id,
+                    **answer_data
+                )
+                self.db.add(answer)
+            
+            self.db.commit()
+            self.db.refresh(answer)
+            
+            return self._format_answer_response(answer, llm_response, evaluation)
+            
+        except Exception as e:
+            self.db.rollback()
+            raise GenerationError(f"Failed to generate answer: {str(e)}")
+    
+    def generate_all_answers(self, project_id: str, question_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Generate answers for all questions in a project"""
+        try:
+            # Get project
+            project = self.db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                raise GenerationError("Project not found")
+            
+            # Get questions
+            if question_ids:
+                questions = self.db.query(Question).filter(
+                    Question.id.in_(question_ids),
+                    Question.questionnaire_id == project.questionnaire_id
+                ).all()
+            else:
+                questions = self.db.query(Question).filter(
+                    Question.questionnaire_id == project.questionnaire_id
+                ).all()
+            
+            if not questions:
+                return {"success": False, "message": "No questions found for project"}
+            
+            # Get document IDs
+            document_ids = self._get_project_document_ids(project)
+            if not document_ids:
+                return self._create_no_context_project_answers(project_id, questions)
+            
+            # Generate answers for each question
+            results = []
+            successful = 0
+            failed = 0
+            
+            for question in questions:
+                try:
+                    answer_result = self.generate_single_answer(project_id, str(question.id), use_cached=False)
+                    answer_result["question_text"] = question.text
+                    answer_result["question_type"] = question.question_type
+                    results.append(answer_result)
+                    successful += 1
+                except Exception as e:
+                    results.append({
+                        "question_id": str(question.id),
+                        "question_text": question.text,
+                        "success": False,
+                        "error": str(e)
+                    })
+                    failed += 1
+            
+            # Update project status
+            if failed == 0:
+                project.status = "COMPLETED"
+            elif successful > 0:
+                project.status = "COMPLETED"  # Partial completion
+            else:
+                project.status = "ERROR"
+            
+            self.db.commit()
+            
+            return {
+                "success": True,
+                "project_id": project_id,
+                "total_questions": len(questions),
+                "successful": successful,
+                "failed": failed,
+                "results": results
+            }
+            
+        except Exception as e:
+            self.db.rollback()
+            raise GenerationError(f"Failed to generate all answers: {str(e)}")
+    
+    def regenerate_answer(self, project_id: str, question_id: str) -> Dict[str, Any]:
+        """Regenerate answer for a specific question"""
+        return self.generate_single_answer(project_id, question_id, use_cached=False)
+    
+    def update_manual_answer(self, project_id: str, question_id: str, 
+                           manual_answer: str) -> Dict[str, Any]:
+        """Update answer with manual input"""
+        try:
+            answer = self.db.query(Answer).filter(
+                Answer.project_id == project_id,
+                Answer.question_id == question_id
+            ).first()
+            
+            if not answer:
+                # Create new answer record
+                answer = Answer(
+                    project_id=project_id,
+                    question_id=question_id,
+                    manual_answer=manual_answer,
+                    status=AnswerStatus.MANUAL_UPDATED,
+                    confidence_score=1.0,  # Manual answers have full confidence
+                    is_answerable=True,
+                    answer_text=manual_answer
+                )
+                self.db.add(answer)
+            else:
+                # Update existing answer
+                answer.manual_answer = manual_answer
+                answer.status = AnswerStatus.MANUAL_UPDATED
+                answer.confidence_score = 1.0
+                answer.is_answerable = True
+            
+            self.db.commit()
+            self.db.refresh(answer)
+            
+            return self._format_answer_response(answer)
+            
+        except Exception as e:
+            self.db.rollback()
+            raise GenerationError(f"Failed to update manual answer: {str(e)}")
+    
+    def confirm_answer(self, project_id: str, question_id: str) -> bool:
+        """Confirm an answer"""
+        try:
+            answer = self.db.query(Answer).filter(
+                Answer.project_id == project_id,
+                Answer.question_id == question_id
+            ).first()
+            
+            if answer:
+                answer.status = AnswerStatus.CONFIRMED
+                self.db.commit()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.db.rollback()
+            raise GenerationError(f"Failed to confirm answer: {str(e)}")
+    
+    def reject_answer(self, project_id: str, question_id: str, reason: Optional[str] = None) -> bool:
+        """Reject an answer"""
+        try:
+            answer = self.db.query(Answer).filter(
+                Answer.project_id == project_id,
+                Answer.question_id == question_id
+            ).first()
+            
+            if answer:
+                answer.status = AnswerStatus.REJECTED
+                if reason:
+                    # Store reason in metadata or as a separate field
+                    if not answer.citations:
+                        answer.citations = []
+                    answer.citations.append({"rejection_reason": reason})
+                
+                self.db.commit()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.db.rollback()
+            raise GenerationError(f"Failed to reject answer: {str(e)}")
+    
+    def get_answer_with_context(self, project_id: str, question_id: str) -> Dict[str, Any]:
+        """Get answer with full context and citations"""
+        try:
+            answer = self.db.query(Answer).filter(
+                Answer.project_id == project_id,
+                Answer.question_id == question_id
+            ).first()
+            
+            if not answer:
+                return {"error": "Answer not found"}
+            
+            # Get question details
+            question = self.db.query(Question).filter(Question.id == question_id).first()
+            
+            # Get citation contexts
+            citation_contexts = []
+            if answer.citations:
+                for citation in answer.citations:
+                    if isinstance(citation, dict) and "chunk_id" in citation:
+                        # Get document ID from answer or project
+                        document_ids = self._get_project_document_ids(answer.project)
+                        if document_ids:
+                            context = vector_index_manager.get_citation_context(
+                                document_ids[0], citation["chunk_id"]
+                            )
+                            citation_contexts.append(context)
+            
+            return {
+                "answer": self._format_answer_response(answer),
+                "question": {
+                    "id": str(question.id),
+                    "text": question.text,
+                    "type": question.question_type,
+                    "section": question.section
+                } if question else None,
+                "citation_contexts": citation_contexts
+            }
+            
+        except Exception as e:
+            raise GenerationError(f"Failed to get answer with context: {str(e)}")
+    
+    def _get_project_document_ids(self, project: Project) -> List[str]:
+        """Get document IDs for a project"""
+        # This is a simplified version - in a real implementation, you'd have
+        # a proper relationship between projects and documents
+        documents = self.db.query(Document).filter(Document.indexed == True).all()
+        return [str(doc.id) for doc in documents]
+    
+    def _create_no_context_answer(self, project_id: str, question_id: str, question: Question) -> Dict[str, Any]:
+        """Create answer when no context is available"""
+        answer = Answer(
+            project_id=project_id,
+            question_id=question_id,
+            answer_text="Unable to answer: No relevant documents found in the project scope.",
+            confidence_score=0.0,
+            is_answerable=False,
+            status=AnswerStatus.MISSING_DATA,
+            citations=[]
+        )
+        
+        self.db.add(answer)
+        self.db.commit()
+        self.db.refresh(answer)
+        
+        return self._format_answer_response(answer)
+    
+    def _create_no_context_project_answers(self, project_id: str, questions: List[Question]) -> Dict[str, Any]:
+        """Create answers for all questions when no context is available"""
+        results = []
+        
+        for question in questions:
+            answer = Answer(
+                project_id=project_id,
+                question_id=question.id,
+                answer_text="Unable to answer: No relevant documents found in the project scope.",
+                confidence_score=0.0,
+                is_answerable=False,
+                status=AnswerStatus.MISSING_DATA,
+                citations=[]
+            )
+            
+            self.db.add(answer)
+            results.append(self._format_answer_response(answer))
+        
+        self.db.commit()
+        
+        return {
+            "success": True,
+            "project_id": project_id,
+            "total_questions": len(questions),
+            "successful": len(questions),
+            "failed": 0,
+            "results": results,
+            "message": "No documents found in project scope"
+        }
+    
+    def _format_answer_response(self, answer: Answer, llm_response: Optional[Dict] = None, 
+                             evaluation: Optional[Dict] = None) -> Dict[str, Any]:
+        """Format answer response for API"""
+        response = {
+            "id": str(answer.id),
+            "project_id": str(answer.project_id),
+            "question_id": str(answer.question_id),
+            "answer_text": answer.answer_text,
+            "manual_answer": answer.manual_answer,
+            "confidence_score": answer.confidence_score,
+            "is_answerable": answer.is_answerable,
+            "citations": answer.citations or [],
+            "status": answer.status,
+            "created_at": answer.created_at,
+            "updated_at": answer.updated_at
+        }
+        
+        if llm_response:
+            response["llm_metadata"] = {
+                "model_used": llm_response.get("model_used"),
+                "relevant_chunks_count": llm_response.get("relevant_chunks_count"),
+                "context_length": llm_response.get("context_length")
+            }
+        
+        if evaluation:
+            response["evaluation"] = evaluation
+        
+        return response
+
+
+# Global answer generation service instance (will be initialized with db session)
+def get_answer_generation_service(db: Session) -> AnswerGenerationService:
+    return AnswerGenerationService(db)

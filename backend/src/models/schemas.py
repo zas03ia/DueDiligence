@@ -153,7 +153,7 @@ class Answer(AnswerBase):
 # Request Models
 class RequestBase(BaseSchema):
     request_type: str = Field(..., description="Type of request")
-    status: ProjectStatus = Field(
+    status: RequestStatus = Field(
         default=RequestStatus.PENDING, description="Request status"
     )
     progress: float = Field(

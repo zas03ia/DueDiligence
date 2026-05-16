@@ -6,7 +6,7 @@ from src.storage.database import get_db, create_tables
 from src.models.schemas import Project, ProjectCreate, ProjectUpdate, ProjectResponse
 from src.services.project_service import ProjectService
 from src.utils.exceptions import DueDiligenceException
-from src.api import projects, documents, answers
+from src.api import projects, documents, answers, questionnaires, requests
 import uvicorn
 
 # Create FastAPI app
@@ -29,6 +29,8 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(documents.router)
 app.include_router(answers.router)
+app.include_router(questionnaires.router)
+app.include_router(requests.router)
 
 
 @app.on_event("startup")

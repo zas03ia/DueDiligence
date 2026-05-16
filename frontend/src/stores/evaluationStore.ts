@@ -34,6 +34,7 @@ export const useEvaluationStore = create<EvaluationState>()(
             error: error instanceof Error ? error.message : 'Failed to evaluate answers',
             isLoading: false 
           })
+          throw error
         }
       },
 

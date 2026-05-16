@@ -1,307 +1,209 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Download, BarChart3, CheckCircle, XCircle, TrendingUp, RefreshCw } from 'lucide-react'
+import { Download, BarChart3, CheckCircle, XCircle, TrendingUp, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores/projectStore'
 import { useEvaluationStore } from '@/stores/evaluationStore'
-import { formatDate, getStatusColor } from '@/lib/utils'
-import { EvaluationResult } from '@/types'
+import PageHeader from '@/components/PageHeader'
+import toast from 'react-hot-toast'
+import { getStatusColor } from '@/lib/utils'
 
 export default function EvaluationReport() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [groundTruthAnswers, setGroundTruthAnswers] = useState<Record<string, string>>({})
   const [showGroundTruthForm, setShowGroundTruthForm] = useState(false)
-  
-  const { 
-    fetchProjectDetails,
-    currentProject,
-    isLoading: projectLoading,
-    error: projectError 
-  } = useProjectStore()
-  
-  const { 
-    evaluateAnswers,
-    currentEvaluation,
-    isLoading: evaluationLoading,
-    error: evaluationError 
-  } = useEvaluationStore()
+
+  const { fetchProjectDetails, projectDetails, isLoading: projectLoading, error: projectError } = useProjectStore()
+  const { evaluateAnswers, currentEvaluation, isLoading: evaluationLoading } = useEvaluationStore()
+
+  const project = projectDetails?.project
+  const questions = projectDetails?.questions || []
 
   useEffect(() => {
-    if (id) {
-      fetchProjectDetails(id)
-    }
+    if (id) fetchProjectDetails(id)
   }, [id, fetchProjectDetails])
 
+  useEffect(() => {
+    if (questions.length > 0 && Object.keys(groundTruthAnswers).length === 0) {
+      const initial: Record<string, string> = {}
+      questions.forEach((q) => {
+        const answer = projectDetails?.answers.find((a) => a.question_id === q.id)
+        initial[q.id] = answer?.manual_answer || answer?.answer_text || ''
+      })
+      setGroundTruthAnswers(initial)
+    }
+  }, [questions, projectDetails?.answers, groundTruthAnswers])
+
   const handleEvaluate = async () => {
-    if (!currentProject || Object.keys(groundTruthAnswers).length === 0) {
-      alert('Please provide ground truth answers for evaluation')
+    if (!id) return
+    const filled = Object.values(groundTruthAnswers).filter((v) => v.trim()).length
+    if (filled === 0) {
+      toast.error('Provide at least one ground truth answer')
       return
     }
-    
     try {
-      await evaluateAnswers(currentProject.id, groundTruthAnswers)
-    } catch (error) {
-      console.error('Evaluation failed:', error)
+      toast.loading('Running evaluation...', { id: 'eval' })
+      await evaluateAnswers(id, groundTruthAnswers)
+      toast.success('Evaluation complete', { id: 'eval' })
+      setShowGroundTruthForm(false)
+    } catch {
+      toast.error('Evaluation failed', { id: 'eval' })
     }
   }
 
-  const handleGroundTruthChange = (questionId: string, answer: string) => {
-    setGroundTruthAnswers(prev => ({
-      ...prev,
-      [questionId]: answer
-    }))
-  }
-
-  const handleDownloadReport = async () => {
+  const handleDownloadReport = () => {
     if (!currentEvaluation) return
-    
-    try {
-      const reportData = {
-        project_id: currentEvaluation.project_id,
-        overall_score: currentEvaluation.overall_score,
-        avg_confidence: currentEvaluation.avg_confidence,
-        total_questions: currentEvaluation.total_questions,
-        evaluation_summary: currentEvaluation.evaluation_report?.evaluation_summary,
-        question_evaluations: currentEvaluation.question_evaluations,
-        similarity_metrics: currentEvaluation.similarity_metrics
-      }
-      
-      const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `evaluation-report-${currentProject?.name || 'project'}-${new Date().toISOString().split('T')[0]}.json`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-    } catch (error) {
-      console.error('Download failed:', error)
-    }
+    const blob = new Blob([JSON.stringify(currentEvaluation, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `evaluation-${project?.name || id}-${new Date().toISOString().split('T')[0]}.json`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   const getScoreColor = (score: number | undefined) => {
-    if (score === undefined) return 'text-gray-400'
+    if (score === undefined) return 'text-muted-foreground'
     if (score >= 0.8) return 'text-green-600'
     if (score >= 0.6) return 'text-yellow-600'
-    if (score >= 0.4) return 'text-orange-600'
     return 'text-red-600'
   }
 
-  const getQualityIcon = (quality: string) => {
-    switch (quality.toLowerCase()) {
-      case 'excellent': return <CheckCircle className="w-4 h-4 text-green-600" />
-      case 'good': return <CheckCircle className="w-4 h-4 text-blue-600" />
-      case 'fair': return <CheckCircle className="w-4 h-4 text-yellow-600" />
-      case 'poor': return <XCircle className="w-4 h-4 text-red-600" />
-      default: return <CheckCircle className="w-4 h-4 text-gray-600" />
-    }
+  if (projectLoading && !project) {
+    return <p className="text-center py-16 text-muted-foreground">Loading...</p>
+  }
+  if (projectError) {
+    return <p className="text-center py-16 text-destructive">{projectError}</p>
+  }
+  if (!project) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-muted-foreground mb-4">Project not found</p>
+        <Button onClick={() => navigate('/evaluation')}>Back to Evaluation</Button>
+      </div>
+    )
   }
 
-  if (projectLoading) return <div className="flex items-center justify-center h-64 text-lg">Loading evaluation...</div>
-  if (projectError) return <div className="flex items-center justify-center h-64 text-red-600">Error: {projectError}</div>
-  if (!currentProject) return <div className="flex items-center justify-center h-64 text-gray-600">Project not found</div>
-
   return (
-    <div className="container mx-auto py-8 px-4">
-      {/* Header */}
-      <div className="mb-6 flex flex-col md:flex-row justify-between items-start gap-4">
-        <div>
-          <Button variant="ghost" size="sm" onClick={() => navigate('/projects')} className="mb-2 p-0">
-            <ArrowLeft className="w-4 h-4 mr-2" /> Back to Projects
-          </Button>
-          <h1 className="text-3xl font-bold text-gray-900">Evaluation Report</h1>
-          <p className="text-gray-600">Project: <strong>{currentProject.name}</strong></p>
-        </div>
-        
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowGroundTruthForm(!showGroundTruthForm)}>
-            {showGroundTruthForm ? 'Hide' : 'Show'} Ground Truth Form
-          </Button>
-          {currentEvaluation && (
-            <Button onClick={handleDownloadReport}>
-              <Download className="w-4 h-4 mr-2" /> Download JSON
+    <div>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Evaluation', href: '/evaluation' },
+          { label: project.name },
+        ]}
+        title="Evaluation Report"
+        subtitle={`Compare AI answers against ground truth for ${project.name}`}
+        actions={
+          <>
+            <Button variant="outline" onClick={() => navigate(`/projects/${id}`)}>Back to Project</Button>
+            <Button variant="outline" onClick={() => setShowGroundTruthForm(!showGroundTruthForm)}>
+              {showGroundTruthForm ? 'Hide' : 'Edit'} Ground Truth
             </Button>
-          )}
-        </div>
-      </div>
+            {currentEvaluation && (
+              <Button onClick={handleDownloadReport}>
+                <Download className="w-4 h-4 mr-2" /> Download
+              </Button>
+            )}
+          </>
+        }
+      />
 
-      <hr className="mb-8" />
-
-      {/* Ground Truth Form */}
-      {showGroundTruthForm && (
-        <div className="mb-8 bg-white rounded-xl border p-6 shadow-sm">
-          <h2 className="text-xl font-bold mb-2">Ground Truth Input</h2>
-          <p className="text-sm text-gray-500 mb-6">Compare AI outputs against your provided gold-standard answers.</p>
-          
-          <div className="space-y-6">
-            {currentEvaluation?.question_evaluations?.map((evaluation) => (
-              <div key={evaluation.question_id} className="border rounded-lg p-4 bg-gray-50/50">
-                <h3 className="font-semibold mb-2">Question {evaluation.question_id}</h3>
-                <p className="text-sm text-gray-700 mb-4 italic">"{evaluation.question_text}"</p>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-gray-400 mb-1">AI Answer</label>
-                    <div className="text-sm p-3 bg-white border rounded h-24 overflow-y-auto">{evaluation.ai_answer}</div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase text-gray-400 mb-1">Ground Truth</label>
+      <div className="container mx-auto px-4 py-6">
+        {showGroundTruthForm && (
+          <div className="mb-8 bg-card border rounded-xl p-6">
+            <h2 className="text-lg font-semibold mb-4">Ground truth answers</h2>
+            {questions.length === 0 ? (
+              <p className="text-muted-foreground">No questions in this project.</p>
+            ) : (
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {questions.map((q) => (
+                  <div key={q.id} className="border rounded-lg p-4">
+                    <p className="text-sm font-medium mb-2">{q.text}</p>
                     <textarea
-                      className="w-full p-3 border rounded text-sm h-24"
-                      placeholder="Enter the correct answer..."
-                      value={groundTruthAnswers[evaluation.question_id] || ''}
-                      onChange={(e) => handleGroundTruthChange(evaluation.question_id, e.target.value)}
+                      className="w-full p-2 border border-input rounded-lg text-sm bg-background"
+                      rows={2}
+                      placeholder="Expected answer..."
+                      value={groundTruthAnswers[q.id] || ''}
+                      onChange={(e) => setGroundTruthAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
                     />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          
-          <div className="mt-6 flex justify-end gap-3">
-            <Button variant="ghost" onClick={() => setShowGroundTruthForm(false)}>Cancel</Button>
-            <Button onClick={handleEvaluate} disabled={evaluationLoading || Object.keys(groundTruthAnswers).length === 0}>
-              {evaluationLoading ? <RefreshCw className="animate-spin w-4 h-4 mr-2" /> : null}
-              Run Evaluation
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Results Dashboard */}
-      {currentEvaluation ? (
-        <div className="space-y-8">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-xl border shadow-sm text-center">
-              <p className="text-sm text-gray-500 font-medium uppercase">Overall Score</p>
-              <div className={`text-4xl font-black my-2 ${getScoreColor(currentEvaluation.overall_score)}`}>
-                {(currentEvaluation.overall_score * 100).toFixed(0)}%
-              </div>
-              <p className="text-xs font-bold text-gray-400">Similarity Index</p>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl border shadow-sm text-center">
-              <p className="text-sm text-gray-500 font-medium uppercase">Avg Confidence</p>
-              <div className={`text-4xl font-black my-2 ${getScoreColor(currentEvaluation.avg_confidence)}`}>
-                {currentEvaluation.avg_confidence.toFixed(2)}
-              </div>
-              <p className="text-xs font-bold text-gray-400">Model Certainty</p>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl border shadow-sm text-center">
-              <p className="text-sm text-gray-500 font-medium uppercase">Answerable Rate</p>
-              <div className="text-4xl font-black my-2 text-blue-600">
-                {(currentEvaluation.answerable_rate * 100).toFixed(0)}%
-              </div>
-              <p className="text-xs font-bold text-gray-400">{currentEvaluation.evaluated_questions} / {currentEvaluation.total_questions} Questions</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Quality Distribution */}
-            <div className="bg-white rounded-xl border p-6 shadow-sm">
-              <h3 className="text-lg font-bold mb-4 flex items-center">
-                <BarChart3 className="w-5 h-5 mr-2 text-blue-500" /> Quality Distribution
-              </h3>
-              <div className="space-y-4">
-                {Object.entries(currentEvaluation.evaluation_report?.evaluation_summary?.quality_distribution || {}).map(([quality, count]) => {
-                  const val = count as number; // Fixed unknown type error
-                  const total = currentEvaluation.evaluation_report?.evaluation_summary?.total_evaluated || 1;
-                  return (
-                    <div key={quality} className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="capitalize font-medium flex items-center gap-2">
-                          {getQualityIcon(quality)} {quality}
-                        </span>
-                        <span className="text-gray-500">{val} ({((val / total) * 100).toFixed(1)}%)</span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-2">
-                        <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${(val / total) * 100}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Confidence Stats */}
-            <div className="bg-white rounded-xl border p-6 shadow-sm">
-              <h3 className="text-lg font-bold mb-4 flex items-center">
-                <TrendingUp className="w-5 h-5 mr-2 text-green-500" /> Confidence Statistics
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                {/* Fixed the 'evaluation_summary' property access errors here */}
-                {[
-                  { label: 'Mean', value: currentEvaluation.evaluation_report?.score_statistics?.confidence?.mean },
-                  { label: 'Std Dev', value: currentEvaluation.evaluation_report?.score_statistics?.confidence?.std },
-                  { label: 'Minimum', value: currentEvaluation.evaluation_report?.score_statistics?.confidence?.min },
-                  { label: 'Maximum', value: currentEvaluation.evaluation_report?.score_statistics?.confidence?.max },
-                ].map((stat) => (
-                  <div key={stat.label} className="p-3 bg-gray-50 rounded-lg border">
-                    <p className="text-xs text-gray-500 uppercase font-bold">{stat.label}</p>
-                    <p className="text-xl font-mono font-bold text-gray-800">{stat.value?.toFixed(3) || 'N/A'}</p>
                   </div>
                 ))}
               </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowGroundTruthForm(false)}>Cancel</Button>
+              <Button onClick={handleEvaluate} disabled={evaluationLoading}>
+                {evaluationLoading && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
+                Run Evaluation
+              </Button>
             </div>
           </div>
+        )}
 
-          {/* Detailed Table */}
-          <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-            <div className="p-4 border-b bg-gray-50">
-              <h3 className="font-bold">Detailed Question Analysis</h3>
+        {currentEvaluation ? (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-card border rounded-xl p-6 text-center">
+                <p className="text-sm text-muted-foreground">Overall Score</p>
+                <p className={`text-4xl font-bold my-2 ${getScoreColor(currentEvaluation.overall_score)}`}>
+                  {(currentEvaluation.overall_score * 100).toFixed(0)}%
+                </p>
+              </div>
+              <div className="bg-card border rounded-xl p-6 text-center">
+                <p className="text-sm text-muted-foreground">Avg Confidence</p>
+                <p className={`text-4xl font-bold my-2 ${getScoreColor(currentEvaluation.avg_confidence)}`}>
+                  {currentEvaluation.avg_confidence.toFixed(2)}
+                </p>
+              </div>
+              <div className="bg-card border rounded-xl p-6 text-center">
+                <p className="text-sm text-muted-foreground">Answerable Rate</p>
+                <p className="text-4xl font-bold my-2 text-primary">
+                  {(currentEvaluation.answerable_rate * 100).toFixed(0)}%
+                </p>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-white border-b">
-                  <tr>
-                    <th className="p-4 font-bold text-gray-600">Question</th>
-                    <th className="p-4 font-bold text-gray-600 text-center">Similarity</th>
-                    <th className="p-4 font-bold text-gray-600 text-center">Confidence</th>
-                    <th className="p-4 font-bold text-gray-600">Quality</th>
+
+            <div className="bg-card border rounded-xl overflow-hidden">
+              <div className="p-4 border-b bg-muted/30 font-semibold">Question analysis</div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="p-4 text-left">Question</th>
+                    <th className="p-4 text-center">Similarity</th>
+                    <th className="p-4 text-center">Confidence</th>
+                    <th className="p-4 text-left">Quality</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody>
                   {currentEvaluation.question_evaluations?.map((q) => (
-                    <tr key={q.question_id} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-4 max-w-md">
-                        <p className="font-medium text-gray-900 truncate">{q.question_text}</p>
-                        <p className="text-xs text-gray-400 mt-1">ID: {q.question_id}</p>
+                    <tr key={q.question_id} className="border-b hover:bg-muted/20">
+                      <td className="p-4 max-w-md truncate">{q.question_text}</td>
+                      <td className={`p-4 text-center font-mono ${getScoreColor(q.similarity_scores?.combined)}`}>
+                        {q.similarity_scores?.combined?.toFixed(3) ?? '—'}
                       </td>
-                      <td className="p-4 text-center font-mono font-bold">
-                        <span className={getScoreColor(q.similarity_scores?.combined)}>
-                          {q.similarity_scores?.combined?.toFixed(3) || '0.000'}
-                        </span>
+                      <td className={`p-4 text-center font-mono ${getScoreColor(q.confidence_score)}`}>
+                        {q.confidence_score?.toFixed(3) ?? '—'}
                       </td>
-                      <td className="p-4 text-center font-mono font-bold">
-                        <span className={getScoreColor(q.confidence_score)}>
-                          {q.confidence_score?.toFixed(3) || '0.000'}
-                        </span>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          {getQualityIcon(q.quality_assessment?.quality || '')}
-                          <span className="capitalize">{q.quality_assessment?.quality || 'Unknown'}</span>
-                        </div>
-                      </td>
+                      <td className="p-4 capitalize">{q.quality_assessment?.quality || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="text-center py-20 bg-gray-50 rounded-xl border-2 border-dashed">
-          <BarChart3 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-600">No Evaluation Data</h2>
-          <p className="text-gray-400 mb-6">Provide ground truth answers to generate a performance report.</p>
-          <Button onClick={() => setShowGroundTruthForm(true)}>Get Started</Button>
-        </div>
-      )}
+        ) : (
+          <div className="text-center py-20 border-2 border-dashed rounded-xl">
+            <BarChart3 className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">No evaluation yet</h2>
+            <p className="text-muted-foreground mb-2">Enter ground truth answers and run evaluation.</p>
+            <p className="text-sm text-muted-foreground mb-6">
+              Ground truth answers are the "correct" expected answers you provide manually. The system will compare them against the AI-generated answers using semantic similarity and keyword overlap to give you a quality score.
+            </p>
+            <Button onClick={() => setShowGroundTruthForm(true)}>Get Started</Button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

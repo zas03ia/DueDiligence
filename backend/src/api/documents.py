@@ -1,19 +1,35 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 import os
 import uuid
+import json
+import asyncio
 from pathlib import Path
-from src.storage.database import get_db
+from src.storage.database import get_db, SessionLocal
 from src.services.document_service import DocumentService
 from src.indexing.indexing_pipeline import IndexingPipeline
 from src.models.schemas import Document, DocumentCreate, IndexingRequest
 from src.models.enums import DocumentType, ChunkingStrategy
 from src.utils.exceptions import IndexingError, DueDiligenceException
-from src.workers.indexing_worker import index_document_task
 from src.config import settings
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
+
+
+def _run_indexing_background(document_id: str, strategy_value: str):
+    """Run indexing in a background task with its own DB session"""
+    db = SessionLocal()
+    try:
+        from src.indexing.indexing_pipeline import IndexingPipeline
+        from src.models.enums import ChunkingStrategy
+        pipeline = IndexingPipeline(db)
+        pipeline.index_document(document_id, ChunkingStrategy(strategy_value))
+    except Exception as e:
+        print(f"Background indexing failed for {document_id}: {e}")
+    finally:
+        db.close()
 
 
 @router.post("/upload", response_model=Document)
@@ -24,37 +40,27 @@ async def upload_document(
     chunking_strategy: str = Form("PARAGRAPH"),
     db: Session = Depends(get_db)
 ):
-    """Upload and optionally index a document"""
+    """Upload a document. Indexing runs in the background — check /documents/{id} for indexed status."""
     try:
-        # Validate file
         if not file.filename:
             raise HTTPException(status_code=400, detail="No filename provided")
-        
-        # Determine file type
+
         document_service = DocumentService(db)
         file_type = document_service.validate_file_type(file.filename)
         if not file_type:
             raise HTTPException(status_code=400, detail="Unsupported file type")
-        
-        # Create upload directory if it doesn't exist
+
         upload_dir = Path(settings.upload_dir)
         upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Generate unique filename
+
         file_id = str(uuid.uuid4())
         file_extension = Path(file.filename).suffix
-        safe_filename = f"{file_id}{file_extension}"
-        file_path = upload_dir / safe_filename
-        
-        # Save file
-        try:
-            with open(file_path, "wb") as buffer:
-                content = await file.read()
-                buffer.write(content)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
-        
-        # Create document record
+        file_path = upload_dir / f"{file_id}{file_extension}"
+
+        content = await file.read()
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+
         document_data = DocumentCreate(
             filename=file.filename,
             file_type=file_type,
@@ -62,30 +68,18 @@ async def upload_document(
             file_path=str(file_path),
             file_size=len(content)
         )
-        
         document = document_service.create_document(document_data)
-        
-        # Auto-index if requested
+
         if auto_index:
+            # Validate strategy before queuing so we fail fast
             try:
-                strategy = ChunkingStrategy(chunking_strategy)
-                task = index_document_task.delay(str(document.id), strategy.value)
-                
-                return {
-                    **document.__dict__,
-                    "indexing_task_id": task.id,
-                    "auto_index": True
-                }
-            except Exception as e:
-                # Document created but indexing failed
-                return {
-                    **document.__dict__,
-                    "indexing_error": str(e),
-                    "auto_index": False
-                }
-        
+                ChunkingStrategy(chunking_strategy)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid chunking strategy")
+            background_tasks.add_task(_run_indexing_background, str(document.id), chunking_strategy)
+
         return document
-        
+
     except HTTPException:
         raise
     except DueDiligenceException as e:
@@ -155,28 +149,18 @@ async def index_document(
     chunking_strategy: str = "PARAGRAPH",
     db: Session = Depends(get_db)
 ):
-    """Index a document"""
+    """Queue document indexing as a background task. Poll GET /{id} or stream /{id}/index/stream for progress."""
     try:
-        # Validate chunking strategy
-        try:
-            strategy = ChunkingStrategy(chunking_strategy)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid chunking strategy")
-        
-        # Start indexing task
-        task = index_document_task.delay(document_id, strategy.value)
-        
-        return {
-            "success": True,
-            "task_id": task.id,
-            "message": "Document indexing started",
-            "chunking_strategy": chunking_strategy
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start indexing: {str(e)}")
+        ChunkingStrategy(chunking_strategy)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid chunking strategy")
+
+    document_service = DocumentService(db)
+    if not document_service.get_document(document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    background_tasks.add_task(_run_indexing_background, document_id, chunking_strategy)
+    return {"success": True, "message": "Indexing started in background", "document_id": document_id}
 
 
 @router.post("/{document_id}/reindex")
@@ -186,34 +170,42 @@ async def reindex_document(
     chunking_strategy: str = "PARAGRAPH",
     db: Session = Depends(get_db)
 ):
-    """Reindex document with new chunking strategy"""
+    """Queue document reindexing as a background task."""
     try:
-        # Validate chunking strategy
-        try:
-            strategy = ChunkingStrategy(chunking_strategy)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid chunking strategy")
-        
-        # Check if document exists
+        ChunkingStrategy(chunking_strategy)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid chunking strategy")
+
+    document_service = DocumentService(db)
+    if not document_service.get_document(document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    background_tasks.add_task(_run_indexing_background, document_id, chunking_strategy)
+    return {"success": True, "message": "Reindexing started in background", "document_id": document_id}
+
+
+@router.get("/{document_id}/index/stream")
+async def stream_indexing_status(
+    document_id: str,
+    db: Session = Depends(get_db)
+):
+    """SSE stream that emits the document's indexed status every 2s until indexed=true or timeout."""
+    async def event_generator():
         document_service = DocumentService(db)
-        document = document_service.get_document(document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        # Start reindexing task
-        task = index_document_task.delay(document_id, strategy.value)
-        
-        return {
-            "success": True,
-            "task_id": task.id,
-            "message": "Document reindexing started",
-            "chunking_strategy": chunking_strategy
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start reindexing: {str(e)}")
+        for _ in range(60):  # max 2 minutes
+            doc = document_service.get_document(document_id)
+            if not doc:
+                yield f"data: {json.dumps({'error': 'Document not found'})}\n\n"
+                return
+            payload = {"document_id": document_id, "indexed": doc.indexed}
+            yield f"data: {json.dumps(payload)}\n\n"
+            if doc.indexed:
+                return
+            await asyncio.sleep(2)
+        yield f"data: {json.dumps({'document_id': document_id, 'indexed': False, 'timeout': True})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.delete("/{document_id}")

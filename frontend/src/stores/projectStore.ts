@@ -16,7 +16,7 @@ interface ProjectState extends LoadingState {
   createProject: (project: Partial<Project>) => Promise<Project>
   updateProject: (id: string, project: Partial<Project>) => Promise<void>
   deleteProject: (id: string) => Promise<void>
-  generateAnswers: (projectId: string, questionIds?: string[]) => Promise<void>
+  generateAnswers: (projectId: string, questionIds?: string[]) => Promise<{ task_id?: string } | void>
   setFilters: (filters: Partial<ProjectFilters>) => void
   clearCurrentProject: () => void
   reset: () => void
@@ -69,7 +69,11 @@ export const useProjectStore = create<ProjectState>()(
         
         try {
           const projectDetails = await apiClient.getProjectDetails(id)
-          set({ projectDetails, isLoading: false })
+          set({
+            projectDetails,
+            currentProject: projectDetails.project,
+            isLoading: false,
+          })
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to fetch project details',
@@ -140,12 +144,27 @@ export const useProjectStore = create<ProjectState>()(
         set({ isLoading: true, error: undefined })
         
         try {
-          await apiClient.generateProjectAnswers(projectId, questionIds)
-          // Refresh project details after generation
+          const result = await apiClient.generateProjectAnswers(projectId, questionIds)
+          if (result?.task_id) {
+            const stored = JSON.parse(localStorage.getItem('project_tasks') || '{}')
+            const tasks = stored[projectId] || []
+            tasks.unshift({
+              id: result.task_id,
+              request_type: 'GENERATE_ANSWERS',
+              status: 'RUNNING',
+              progress: 0,
+              project_id: projectId,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            stored[projectId] = tasks.slice(0, 20)
+            localStorage.setItem('project_tasks', JSON.stringify(stored))
+          }
           if (get().projectDetails?.project.id === projectId) {
             await get().fetchProjectDetails(projectId)
           }
           set({ isLoading: false })
+          return result
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to generate answers',

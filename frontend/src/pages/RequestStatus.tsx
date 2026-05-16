@@ -1,35 +1,32 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores/projectStore'
+import { apiClient } from '@/services/api'
+import PageHeader from '@/components/PageHeader'
 import { formatDate, getStatusColor } from '@/lib/utils'
 import { Request } from '@/types'
 
 export default function RequestStatus() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  
-  // FIXED: selectedRequest should hold the object to access properties in the modal
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [requests, setRequests] = useState<Request[]>([])
-  
-  const { 
-    currentProject,
-    isLoading: projectLoading,
-    error: projectError,
-    fetchProjectDetails // Added from store
-  } = useProjectStore()
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  // Memoized fetch to prevent unnecessary re-renders
+  const { projectDetails, fetchProjectDetails, isLoading, error } = useProjectStore()
+  const project = projectDetails?.project
+
   const loadData = useCallback(async () => {
     if (!id) return
+    setLoadError(null)
     try {
-      // In a real app: const data = await api.getRequests(id); setRequests(data);
-      console.log('Fetching requests for project:', id)
-    } catch (error) {
-      console.error('Fetch failed:', error)
+      const data = await apiClient.getProjectRequests(id)
+      setRequests(data)
+    } catch (e: any) {
+      setLoadError(e?.response?.data?.detail || 'Failed to load requests')
     }
   }, [id])
 
@@ -40,174 +37,127 @@ export default function RequestStatus() {
     }
   }, [id, fetchProjectDetails, loadData])
 
-  // Auto-refresh logic
   useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (autoRefresh) {
-      interval = setInterval(() => {
-        loadData()
-      }, 5000)
-    }
-    return () => {
-      if (interval) clearInterval(interval)
-    }
+    if (!autoRefresh) return
+    const interval = setInterval(loadData, 5000)
+    return () => clearInterval(interval)
   }, [autoRefresh, loadData])
 
   const getStatusIcon = (status: string) => {
-    const iconClass = "w-4 h-4"
     switch (status) {
-      case 'PENDING': return <Clock className={`${iconClass} text-yellow-600`} />
-      case 'RUNNING': return <RefreshCw className={`${iconClass} text-blue-600 animate-spin`} />
-      case 'COMPLETED': return <CheckCircle className={`${iconClass} text-green-600`} />
-      case 'FAILED': return <XCircle className={`${iconClass} text-red-600`} />
-      default: return <Clock className={`${iconClass} text-gray-600`} />
+      case 'RUNNING':  return <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
+      case 'COMPLETED': return <CheckCircle className="w-4 h-4 text-green-600" />
+      case 'FAILED':   return <XCircle className="w-4 h-4 text-red-600" />
+      default:         return <Clock className="w-4 h-4 text-yellow-600" />
     }
   }
 
-  const getProgressPercentage = (request: Request) => Math.round((request.progress || 0) * 100)
-
-  if (projectLoading) return <div className="flex items-center justify-center h-64 text-lg">Loading...</div>
-  if (projectError) return <div className="flex items-center justify-center h-64 text-red-600">Error: {projectError}</div>
-  if (!currentProject) return <div className="flex items-center justify-center h-64 text-gray-600">Project not found</div>
+  if (isLoading && !project) return <p className="text-center py-16">Loading...</p>
+  if (error) return <p className="text-center py-16 text-destructive">{error}</p>
+  if (!project) return <p className="text-center py-16">Project not found</p>
 
   return (
-    <div className="container mx-auto py-8 px-4">
-      {/* Header */}
-      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <Button variant="ghost" size="sm" onClick={() => navigate('/projects')} className="mb-2 p-0">
-            <ArrowLeft className="w-4 h-4 mr-2" /> Back to Projects
-          </Button>
-          <h1 className="text-3xl font-bold text-gray-900">Request Status</h1>
-          <p className="text-gray-600">Project: <strong>{currentProject.name}</strong></p>
-        </div>
-        
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setAutoRefresh(!autoRefresh)} className={autoRefresh ? 'border-blue-500 text-blue-600' : ''}>
-            {autoRefresh ? 'Stop Auto-refresh' : 'Enable Auto-refresh'}
-          </Button>
-          <Button onClick={loadData} disabled={autoRefresh}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Refresh Now
-          </Button>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Projects', href: '/projects' },
+          { label: project.name, href: `/projects/${id}` },
+          { label: 'Request Status' },
+        ]}
+        title="Request Status"
+        subtitle="Track background jobs and project progress"
+        actions={
+          <>
+            <Button variant="outline" onClick={() => navigate(`/projects/${id}`)}>Back to Project</Button>
+            <Button variant="outline" onClick={() => setAutoRefresh(!autoRefresh)}>
+              {autoRefresh ? 'Stop Auto-refresh' : 'Auto-refresh'}
+            </Button>
+            <Button onClick={loadData}><RefreshCw className="w-4 h-4 mr-2" /> Refresh</Button>
+          </>
+        }
+      />
 
-      <hr className="mb-8" />
+      <div className="container mx-auto px-4 py-6">
+        {loadError && (
+          <div className="mb-4 p-4 bg-destructive/10 text-destructive rounded-lg border border-destructive/20">
+            {loadError}
+          </div>
+        )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Stats */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-xl border p-6 shadow-sm">
-            <h3 className="text-lg font-semibold mb-4">Statistics</h3>
-            <div className="space-y-3">
-              {[
-                { label: 'Total', value: requests.length, color: 'text-gray-900' },
-                { label: 'Running', value: requests.filter(r => r.status === 'RUNNING').length, color: 'text-blue-600' },
-                { label: 'Completed', value: requests.filter(r => r.status === 'COMPLETED').length, color: 'text-green-600' },
-                { label: 'Failed', value: requests.filter(r => r.status === 'FAILED').length, color: 'text-red-600' },
-              ].map(stat => (
-                <div key={stat.label} className="flex justify-between items-center border-b pb-2 last:border-0">
-                  <span className="text-sm text-gray-600">{stat.label}</span>
-                  <span className={`text-lg font-bold ${stat.color}`}>{stat.value}</span>
-                </div>
-              ))}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="bg-card border rounded-xl p-6">
+            <h3 className="font-semibold mb-4">Statistics</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between"><span>Total</span><strong>{requests.length}</strong></div>
+              <div className="flex justify-between"><span>Pending</span><strong className="text-yellow-600">{requests.filter(r => r.status === 'PENDING').length}</strong></div>
+              <div className="flex justify-between"><span>Running</span><strong className="text-blue-600">{requests.filter(r => r.status === 'RUNNING').length}</strong></div>
+              <div className="flex justify-between"><span>Completed</span><strong className="text-green-600">{requests.filter(r => r.status === 'COMPLETED').length}</strong></div>
+              <div className="flex justify-between"><span>Failed</span><strong className="text-red-600">{requests.filter(r => r.status === 'FAILED').length}</strong></div>
             </div>
           </div>
-        </div>
 
-        {/* Right Column: List */}
-        <div className="lg:col-span-2 space-y-4">
-          {requests.map((request) => (
-            <div 
-              key={request.id} 
-              className="bg-white border rounded-lg p-4 hover:border-blue-300 transition-all cursor-pointer shadow-sm"
-              onClick={() => setSelectedRequest(request)}
-            >
-              <div className="flex justify-between items-center mb-3">
-                <div className="flex items-center gap-3">
-                  {getStatusIcon(request.status)}
-                  <span className="font-semibold text-gray-800">{request.request_type}</span>
-                </div>
-                <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${getStatusColor(request.status)}`}>
-                  {request.status}
-                </span>
-              </div>
-
-              {request.status === 'RUNNING' && (
-                <div className="mb-3">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span>Progress</span>
-                    <span>{getProgressPercentage(request)}%</span>
+          <div className="lg:col-span-2 space-y-3">
+            {requests.map((request) => (
+              <div
+                key={request.id}
+                className="bg-card border rounded-lg p-4 cursor-pointer hover:border-primary/50"
+                onClick={() => setSelectedRequest(request)}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center gap-2">
+                    {getStatusIcon(request.status)}
+                    <span className="font-medium">{request.request_type}</span>
                   </div>
-                  <div className="w-full bg-gray-100 rounded-full h-1.5">
-                    <div 
-                      className="bg-blue-600 h-1.5 rounded-full transition-all duration-500" 
-                      style={{ width: `${getProgressPercentage(request)}%` }} 
+                  <span className={`px-2 py-0.5 text-xs rounded-full ${getStatusColor(request.status)}`}>
+                    {request.status}
+                  </span>
+                </div>
+                {(request.status === 'RUNNING' || request.status === 'PENDING') && (
+                  <div className="w-full bg-muted rounded-full h-1.5 mb-2">
+                    <div
+                      className="bg-primary h-1.5 rounded-full transition-all"
+                      style={{ width: `${Math.round((request.progress || 0) * 100)}%` }}
                     />
                   </div>
-                </div>
-              )}
-              
-              <div className="text-xs text-gray-500 flex justify-between">
-                <span>ID: {request.id.substring(0, 8)}...</span>
-                <span>{formatDate(request.created_at)}</span>
+                )}
+                {request.error_message && (
+                  <p className="text-xs text-destructive mt-1 truncate">{request.error_message}</p>
+                )}
+                <p className="text-xs text-muted-foreground">{formatDate(request.created_at)}</p>
               </div>
-            </div>
-          ))}
+            ))}
 
-          {requests.length === 0 && (
-            <div className="text-center py-20 bg-gray-50 rounded-xl border-2 border-dashed">
-              <p className="text-gray-500">No active requests found for this project.</p>
-            </div>
-          )}
+            {requests.length === 0 && !loadError && (
+              <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-xl">
+                <p className="font-medium mb-2">No background jobs yet</p>
+                <p className="text-sm">Jobs appear here when you click "Generate All" on a project. Each job tracks the progress of AI answer generation or document indexing.</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Modal Overlay */}
       {selectedRequest && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
-            <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-              <h3 className="text-xl font-bold">Request Details</h3>
-              <button onClick={() => setSelectedRequest(null)} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setSelectedRequest(null)}
+        >
+          <div className="bg-card rounded-xl max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-lg mb-4">{selectedRequest.request_type}</h3>
+            <div className="space-y-1 text-sm mb-4">
+              <p><span className="text-muted-foreground">Status: </span>{selectedRequest.status}</p>
+              <p><span className="text-muted-foreground">Progress: </span>{Math.round((selectedRequest.progress || 0) * 100)}%</p>
+              <p className="text-xs font-mono text-muted-foreground">{selectedRequest.id}</p>
             </div>
-            
-            <div className="p-6 max-h-[70vh] overflow-y-auto space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-gray-500">Type</p>
-                  <p className="font-medium">{selectedRequest.request_type}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">Status</p>
-                  <p className={`font-bold ${getStatusColor(selectedRequest.status)}`}>{selectedRequest.status}</p>
-                </div>
-                <div className="col-span-2">
-                  <p className="text-gray-500">Request ID</p>
-                  <p className="font-mono text-xs bg-gray-100 p-1 rounded">{selectedRequest.id}</p>
-                </div>
-              </div>
-
-              {selectedRequest.result_data && (
-                <div className="mt-4">
-                  <p className="text-sm font-semibold mb-2">Result Data</p>
-                  <pre className="bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto">
-                    {JSON.stringify(selectedRequest.result_data, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              {selectedRequest.error_message && (
-                <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
-                  <p className="text-red-700 text-sm font-bold">Error Message</p>
-                  <p className="text-red-600 text-sm">{selectedRequest.error_message}</p>
-                </div>
-              )}
-            </div>
-            
-            <div className="p-4 bg-gray-50 border-t flex justify-end">
-              <Button onClick={() => setSelectedRequest(null)}>Close</Button>
-            </div>
+            {selectedRequest.result_data && (
+              <pre className="bg-muted p-3 rounded text-xs overflow-auto max-h-48">
+                {JSON.stringify(selectedRequest.result_data, null, 2)}
+              </pre>
+            )}
+            {selectedRequest.error_message && (
+              <p className="text-destructive text-sm mt-2">{selectedRequest.error_message}</p>
+            )}
+            <Button className="mt-4 w-full" onClick={() => setSelectedRequest(null)}>Close</Button>
           </div>
         </div>
       )}

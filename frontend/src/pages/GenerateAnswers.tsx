@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Play, CheckCircle, XCircle, RefreshCw, FileText, AlertTriangle, Settings, HelpCircle } from 'lucide-react'
+import { ArrowLeft, Play, CheckCircle, XCircle, RefreshCw, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores/projectStore'
 import { useAnswerStore } from '@/stores/answerStore'
-import { formatDate, getStatusColor, getConfidenceColor } from '@/lib/utils'
-import Navigation from '@/components/Navigation'
+import PageHeader from '@/components/PageHeader'
+import toast from 'react-hot-toast'
+import { getStatusColor, getConfidenceColor } from '@/lib/utils'
 
 export default function GenerateAnswers() {
   const { id } = useParams<{ id: string }>()
@@ -36,14 +37,20 @@ export default function GenerateAnswers() {
   }, [id, fetchProjectDetails])
 
   const handleGenerateAnswers = async () => {
-    if (!currentProject?.id) return
-    
+    if (!id) return
     const questionIds = generationMode === 'selected' ? selectedQuestions : undefined
-    
     try {
-      await generateAnswers(currentProject.id, questionIds)
-    } catch (error) {
-      console.error('Failed to generate answers:', error)
+      toast.loading('Starting answer generation...', { id: 'gen' })
+      const result = await generateAnswers(id, questionIds)
+      toast.success(
+        result?.task_id
+          ? 'Generation started in background. Check Request Status.'
+          : 'Answers generated successfully',
+        { id: 'gen' }
+      )
+      if (result?.task_id) navigate(`/projects/${id}/requests`)
+    } catch {
+      toast.error('Failed to generate answers', { id: 'gen' })
     }
   }
 
@@ -102,68 +109,46 @@ export default function GenerateAnswers() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navigation
+    <div>
+      <PageHeader
         breadcrumbs={[
           { label: 'Projects', href: '/projects' },
-          { label: currentProject?.name || 'Project Details', href: `/projects/${id}` },
-          { label: 'Generate Answers' }
+          { label: projectDetails?.project?.name || 'Project', href: `/projects/${id}` },
+          { label: 'Generate Answers' },
         ]}
         title="Generate Answers"
         subtitle="AI-powered answer generation for your due diligence questions"
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${id}`)}>
+              <ArrowLeft className="w-4 h-4 mr-2" /> Back to Project
+            </Button>
+            <Button
+              onClick={handleGenerateAnswers}
+              disabled={projectLoading || projectDetails?.project?.status === 'GENERATING'}
+            >
+              {projectLoading ? (
+                <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-foreground mr-2" />Processing...</>
+              ) : (
+                <><Play className="w-4 h-4 mr-2" />Generate {generationMode === 'selected' ? selectedQuestions.length : 'All'} Answers</>
+              )}
+            </Button>
+          </>
+        }
       />
-      
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-6">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => navigate(`/projects/${id}`)}
-            className="mb-4"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Project
-          </Button>
 
-          <div className="flex flex-col md:flex-row justify-between items-start gap-4">
-            <div className="flex items-center gap-4">
-              <div className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${getStatusColor(currentProject?.status || 'DRAFT')}`}>
-                {currentProject?.status}
-              </div>
-              <div className="text-sm text-gray-500">
-                {questions.length} questions • {answerStats.confirmed} answered
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Button 
-                onClick={handleGenerateAnswers} 
-                disabled={projectLoading || currentProject?.status === 'GENERATING'}
-                className="min-w-[140px]"
-              >
-                {projectLoading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 mr-2" />
-                    Generate {generationMode === 'selected' ? selectedQuestions.length : 'All'} Answers
-                  </>
-                )}
-              </Button>
-              <Button variant="outline">
-                <HelpCircle className="w-4 h-4 mr-2" />
-                Help
-              </Button>
-            </div>
-          </div>
+      <div className="container mx-auto px-4 py-6">
+        <div className="flex items-center gap-3 mb-6">
+          <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${getStatusColor(projectDetails?.project?.status || 'DRAFT')}`}>
+            {projectDetails?.project?.status}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            {questions.length} questions • {answerStats.confirmed} confirmed
+          </span>
         </div>
 
         {/* Generation Controls */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6 mb-8">
+        <div className="bg-card rounded-lg border p-6 mb-8">
           <h2 className="text-lg font-semibold mb-4">Generation Options</h2>
           
           <div className="space-y-4">
@@ -207,15 +192,15 @@ export default function GenerateAnswers() {
         </div>
 
         {/* Questions List */}
-        <div className="bg-white rounded-lg border border-gray-200">
-          <div className="p-4 border-b border-gray-200">
+        <div className="bg-card rounded-lg border">
+          <div className="p-4 border-b">
             <h2 className="text-lg font-semibold">Questions</h2>
-            <p className="text-sm text-gray-600 mt-1">
+            <p className="text-sm text-muted-foreground mt-1">
               Select questions to generate answers for, or generate all answers at once.
             </p>
           </div>
 
-          <div className="divide-y divide-gray-200">
+          <div className="divide-y divide-border">
             {questions.map((question, index) => {
               const answer = answers.find(a => a.question_id === question.id)
               const isSelected = selectedQuestions.includes(question.id)
@@ -223,7 +208,7 @@ export default function GenerateAnswers() {
               return (
                 <div 
                   key={question.id} 
-                  className={`p-4 hover:bg-gray-50 ${isSelected ? 'bg-blue-50' : ''}`}
+                  className={`p-4 hover:bg-muted/30 ${isSelected ? 'bg-primary/5' : ''}`}
                 >
                   <div className="flex items-start space-x-4">
                     {generationMode === 'selected' && (
@@ -238,11 +223,11 @@ export default function GenerateAnswers() {
                     <div className="flex-1">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center space-x-2">
-                          <span className="text-sm font-medium text-gray-500">
+                          <span className="text-sm font-medium text-muted-foreground">
                             Q{index + 1}
                           </span>
                           {question.section && (
-                            <span className="text-xs bg-gray-100 px-2 py-1 rounded">
+                            <span className="text-xs bg-muted px-2 py-1 rounded">
                               {question.section}
                             </span>
                           )}
@@ -265,13 +250,13 @@ export default function GenerateAnswers() {
                         </div>
                       </div>
 
-                      <h3 className="text-base font-medium text-gray-900 mb-2">
+                      <h3 className="text-base font-medium mb-2">
                         {question.text}
                       </h3>
 
                       {answer?.answer_text && (
-                        <div className="bg-gray-50 p-3 rounded border">
-                          <p className="text-sm text-gray-700">{answer.answer_text}</p>
+                        <div className="bg-muted/50 p-3 rounded border">
+                          <p className="text-sm">{answer.answer_text}</p>
                         </div>
                       )}
 
@@ -319,9 +304,9 @@ export default function GenerateAnswers() {
 
           {questions.length === 0 && (
             <div className="text-center py-12">
-              <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No questions available</h3>
-              <p className="text-gray-500">This project doesn't have any questions to generate answers for.</p>
+              <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-medium mb-2">No questions available</h3>
+              <p className="text-muted-foreground">This project doesn't have any questions to generate answers for.</p>
             </div>
           )}
         </div>

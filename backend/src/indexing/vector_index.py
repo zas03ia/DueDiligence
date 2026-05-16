@@ -31,27 +31,26 @@ class VectorIndexManager:
             
             for chunk in chunks_with_embeddings:
                 documents.append(chunk.text)
-                
-                # Create metadata for the chunk
+
+                # ChromaDB only accepts str/int/float/bool — drop None values
                 metadata = {
                     "document_id": document_id,
                     "chunk_id": chunk.id,
                     "chunk_type": chunk.chunk_type,
                     "start_index": chunk.start_index,
                     "end_index": chunk.end_index,
-                    "source_section": chunk.source_section,
-                    "embedding_model": getattr(chunk, 'embedding_model', ''),
-                    "text_length": len(chunk.text)
+                    "embedding_model": getattr(chunk, 'embedding_model', '') or '',
+                    "text_length": len(chunk.text),
                 }
-                
-                # Add location-specific metadata
-                if chunk.page_number:
-                    metadata["page_number"] = chunk.page_number
-                if chunk.slide_number:
-                    metadata["slide_number"] = chunk.slide_number
-                if chunk.sheet_name:
-                    metadata["sheet_name"] = chunk.sheet_name
-                
+                if chunk.source_section is not None:
+                    metadata["source_section"] = str(chunk.source_section)
+                if chunk.page_number is not None:
+                    metadata["page_number"] = int(chunk.page_number)
+                if chunk.slide_number is not None:
+                    metadata["slide_number"] = int(chunk.slide_number)
+                if chunk.sheet_name is not None:
+                    metadata["sheet_name"] = str(chunk.sheet_name)
+
                 metadatas.append(metadata)
                 ids.append(chunk.id)
             
@@ -169,29 +168,25 @@ class VectorIndexManager:
             ids = []
             
             for chunk in chunks:
-                # Create citation metadata with precise location info
+                # ChromaDB only accepts str/int/float/bool — drop None values
                 citation_metadata = {
                     "document_id": document_id,
                     "chunk_id": chunk.id,
                     "chunk_type": chunk.chunk_type,
                     "text_length": len(chunk.text),
-                    "citation_type": "chunk"
+                    "citation_type": "chunk",
+                    "start_char": chunk.start_index,
+                    "end_char": chunk.end_index,
                 }
-                
-                # Add precise location information
-                if chunk.page_number:
-                    citation_metadata["page_number"] = chunk.page_number
-                if chunk.slide_number:
-                    citation_metadata["slide_number"] = chunk.slide_number
-                if chunk.sheet_name:
-                    citation_metadata["sheet_name"] = chunk.sheet_name
-                if chunk.source_section:
-                    citation_metadata["source_section"] = chunk.source_section
-                
-                # Add character positions for precise citation
-                citation_metadata["start_char"] = chunk.start_index
-                citation_metadata["end_char"] = chunk.end_index
-                
+                if chunk.page_number is not None:
+                    citation_metadata["page_number"] = int(chunk.page_number)
+                if chunk.slide_number is not None:
+                    citation_metadata["slide_number"] = int(chunk.slide_number)
+                if chunk.sheet_name is not None:
+                    citation_metadata["sheet_name"] = str(chunk.sheet_name)
+                if chunk.source_section is not None:
+                    citation_metadata["source_section"] = str(chunk.source_section)
+
                 citations.append(chunk.text)
                 metadatas.append(citation_metadata)
                 ids.append(f"cite_{chunk.id}")

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { Answer, LoadingState, AnswerFilters } from '../types'
 import { apiClient } from '../services/api'
+import { useProjectStore } from './projectStore'
 
 interface AnswerState extends LoadingState {
   answers: Answer[]
@@ -11,13 +12,19 @@ interface AnswerState extends LoadingState {
   // Actions
   fetchProjectAnswers: (projectId: string) => Promise<void>
   fetchAnswer: (answerId: string) => Promise<void>
-  updateAnswer: (answerId: string, answerData: Partial<Answer>) => Promise<void>
-  confirmAnswer: (answerId: string) => Promise<void>
-  rejectAnswer: (answerId: string, reason?: string) => Promise<void>
-  regenerateAnswer: (answerId: string) => Promise<void>
+  updateAnswer: (answerId: string, answerData: Partial<Answer>, projectId?: string) => Promise<void>
+  confirmAnswer: (answerId: string, projectId?: string) => Promise<void>
+  rejectAnswer: (answerId: string, reason?: string, projectId?: string) => Promise<void>
+  regenerateAnswer: (answerId: string, projectId?: string) => Promise<void>
   setFilters: (filters: Partial<AnswerFilters>) => void
   clearCurrentAnswer: () => void
   reset: () => void
+}
+
+const refreshProjectDetails = async (projectId?: string) => {
+  if (projectId) {
+    await useProjectStore.getState().fetchProjectDetails(projectId)
+  }
 }
 
 const initialState: Omit<AnswerState, 'fetchProjectAnswers' | 'fetchAnswer' | 'updateAnswer' | 'confirmAnswer' | 'rejectAnswer' | 'regenerateAnswer' | 'setFilters' | 'clearCurrentAnswer' | 'reset'> = {
@@ -61,7 +68,7 @@ export const useAnswerStore = create<AnswerState>()(
         }
       },
 
-      updateAnswer: async (answerId: string, answerData: Partial<Answer>) => {
+      updateAnswer: async (answerId: string, answerData: Partial<Answer>, projectId?: string) => {
         set({ isLoading: true, error: undefined })
         
         try {
@@ -79,7 +86,7 @@ export const useAnswerStore = create<AnswerState>()(
             ),
             isLoading: false
           }))
-          
+          await refreshProjectDetails(projectId)
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to update answer',
@@ -88,7 +95,7 @@ export const useAnswerStore = create<AnswerState>()(
         }
       },
 
-      confirmAnswer: async (answerId: string) => {
+      confirmAnswer: async (answerId: string, projectId?: string) => {
         set({ isLoading: true, error: undefined })
         
         try {
@@ -106,7 +113,7 @@ export const useAnswerStore = create<AnswerState>()(
             ),
             isLoading: false
           }))
-          
+          await refreshProjectDetails(projectId)
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to confirm answer',
@@ -115,7 +122,7 @@ export const useAnswerStore = create<AnswerState>()(
         }
       },
 
-      rejectAnswer: async (answerId: string, reason?: string) => {
+      rejectAnswer: async (answerId: string, reason?: string, projectId?: string) => {
         set({ isLoading: true, error: undefined })
         
         try {
@@ -133,7 +140,7 @@ export const useAnswerStore = create<AnswerState>()(
             ),
             isLoading: false
           }))
-          
+          await refreshProjectDetails(projectId)
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to reject answer',
@@ -142,7 +149,7 @@ export const useAnswerStore = create<AnswerState>()(
         }
       },
 
-      regenerateAnswer: async (answerId: string) => {
+      regenerateAnswer: async (answerId: string, projectId?: string) => {
         set({ isLoading: true, error: undefined })
         
         try {
@@ -160,7 +167,7 @@ export const useAnswerStore = create<AnswerState>()(
             ),
             isLoading: false
           }))
-          
+          await refreshProjectDetails(projectId)
         } catch (error) {
           set({ 
             error: error instanceof Error ? error.message : 'Failed to regenerate answer',

@@ -50,9 +50,7 @@ class ApiClient {
       (response) => response,
       (error) => {
         if (error.response?.status === 401) {
-          // Handle unauthorized
           localStorage.removeItem('auth_token')
-          window.location.href = '/login'
         }
         return Promise.reject(error)
       }
@@ -102,10 +100,16 @@ class ApiClient {
     questionIds?: string[], 
     asyncProcessing = true
   ): Promise<any> {
-    const response = await this.client.post(`/api/v1/projects/${projectId}/generate-answers`, {
-      question_ids: questionIds,
-      async_processing: asyncProcessing
-    })
+    const response = await this.client.post(
+      `/api/v1/projects/${projectId}/generate-answers`,
+      null,
+      {
+        params: {
+          question_ids: questionIds,
+          async_processing: asyncProcessing,
+        },
+      }
+    )
     return response.data
   }
 
@@ -120,9 +124,11 @@ class ApiClient {
   }
 
   async setProjectQuestionnaire(projectId: string, questionnaireId: string): Promise<any> {
-    const response = await this.client.post(`/api/v1/projects/${projectId}/questionnaire`, {
-      questionnaire_id: questionnaireId
-    })
+    const response = await this.client.post(
+      `/api/v1/projects/${projectId}/questionnaire`,
+      null,
+      { params: { questionnaire_id: questionnaireId } }
+    )
     return response.data
   }
 
@@ -146,24 +152,26 @@ class ApiClient {
     formData.append('chunking_strategy', params.chunking_strategy || 'PARAGRAPH')
 
     const response = await this.client.post('/api/v1/documents/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+      headers: { 'Content-Type': 'multipart/form-data' },
     })
     return response.data
   }
 
   async indexDocument(id: string, chunkingStrategy = 'PARAGRAPH'): Promise<any> {
-    const response = await this.client.post(`/api/v1/documents/${id}/index`, {
-      chunking_strategy: chunkingStrategy
-    })
+    const response = await this.client.post(
+      `/api/v1/documents/${id}/index`,
+      null,
+      { params: { chunking_strategy: chunkingStrategy } }
+    )
     return response.data
   }
 
   async reindexDocument(id: string, chunkingStrategy = 'PARAGRAPH'): Promise<any> {
-    const response = await this.client.post(`/api/v1/documents/${id}/reindex`, {
-      chunking_strategy: chunkingStrategy
-    })
+    const response = await this.client.post(
+      `/api/v1/documents/${id}/reindex`,
+      null,
+      { params: { chunking_strategy: chunkingStrategy } }
+    )
     return response.data
   }
 
@@ -184,7 +192,13 @@ class ApiClient {
   }
 
   async searchDocuments(params: SearchParams): Promise<SearchResult[]> {
-    const response = await this.client.post('/api/v1/documents/search', params)
+    const response = await this.client.post('/api/v1/documents/search', null, {
+      params: {
+        query: params.query,
+        document_ids: params.document_ids,
+        top_k: params.top_k ?? 10,
+      },
+    })
     return response.data.results
   }
 
@@ -238,8 +252,8 @@ class ApiClient {
   }
 
   async rejectAnswer(id: string, reason?: string): Promise<any> {
-    const response = await this.client.post(`/api/v1/answers/${id}/reject`, {
-      reason
+    const response = await this.client.post(`/api/v1/answers/${id}/reject`, null, {
+      params: { reason },
     })
     return response.data
   }
@@ -282,9 +296,29 @@ class ApiClient {
     return response.data
   }
 
+  // Questionnaires
+  async getQuestionnaires(): Promise<any[]> {
+    const response = await this.client.get('/api/v1/questionnaires')
+    return response.data
+  }
+
+  async uploadQuestionnaire(file: File): Promise<any> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await this.client.post('/api/v1/questionnaires/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  }
+
   // Request status
   async getRequestStatus(id: string): Promise<Request> {
     const response = await this.client.get(`/api/v1/requests/${id}`)
+    return response.data
+  }
+
+  async getProjectRequests(projectId: string): Promise<Request[]> {
+    const response = await this.client.get(`/api/v1/requests/project/${projectId}`)
     return response.data
   }
 }

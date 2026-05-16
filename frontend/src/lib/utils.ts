@@ -28,6 +28,7 @@ export function formatFileSize(bytes: number): string {
 
 export function getStatusColor(status: string): string {
   const statusColors: Record<string, string> = {
+    'RUNNING': 'bg-blue-100 text-blue-800',
     'DRAFT': 'bg-gray-100 text-gray-800',
     'INDEXING': 'bg-blue-100 text-blue-800',
     'READY': 'bg-green-100 text-green-800',

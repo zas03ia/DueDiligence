@@ -1,13 +1,14 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, CheckCircle, Info, FileText, Users, Target, AlertTriangle, Building2, FileCheck, Sparkles } from 'lucide-react'
+import { ArrowLeft, CheckCircle, Info, FileText, Upload, Target, AlertTriangle, Building2, FileCheck, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useProjectStore } from '@/stores/projectStore'
-import Navigation from '@/components/Navigation'
+import { apiClient } from '@/services/api'
+import PageHeader from '@/components/PageHeader'
 import toast from 'react-hot-toast'
 
 export default function CreateProject() {
@@ -19,6 +20,34 @@ export default function CreateProject() {
     questionnaire_id: ''
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [questionnaires, setQuestionnaires] = useState<{ id: string; name: string }[]>([])
+  const [questionnaireFile, setQuestionnaireFile] = useState<File | null>(null)
+  const [uploadingQuestionnaire, setUploadingQuestionnaire] = useState(false)
+  const questionnaireFileRef = React.useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    apiClient.getQuestionnaires()
+      .then(setQuestionnaires)
+      .catch(() => {})
+  }, [])
+
+  const handleQuestionnaireUpload = async (file: File) => {
+    setUploadingQuestionnaire(true)
+    try {
+      toast.loading('Parsing questionnaire...', { id: 'q-upload' })
+      const result = await apiClient.uploadQuestionnaire(file)
+      toast.success(`Questionnaire parsed: ${result.total_questions} questions found`, { id: 'q-upload' })
+      // Refresh list and auto-select the new questionnaire
+      const updated = await apiClient.getQuestionnaires()
+      setQuestionnaires(updated)
+      setFormData(prev => ({ ...prev, questionnaire_id: result.questionnaire_id }))
+      setQuestionnaireFile(file)
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Failed to parse questionnaire', { id: 'q-upload' })
+    } finally {
+      setUploadingQuestionnaire(false)
+    }
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -89,11 +118,11 @@ export default function CreateProject() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navigation
+    <div>
+      <PageHeader
         breadcrumbs={[
           { label: 'Projects', href: '/projects' },
-          { label: 'Create New Project' }
+          { label: 'Create New Project' },
         ]}
         title="Create New Project"
         subtitle="Set up a new due diligence project to analyze documents and generate insights"
@@ -213,25 +242,66 @@ export default function CreateProject() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
-                  <label htmlFor="questionnaire_id" className="block text-sm font-medium text-foreground">
-                    Questionnaire Template
-                  </label>
-                  <select
-                    id="questionnaire_id"
-                    name="questionnaire_id"
-                    value={formData.questionnaire_id}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label htmlFor="questionnaire_id" className="block text-sm font-medium text-foreground">
+                      Select existing questionnaire
+                    </label>
+                    <select
+                      id="questionnaire_id"
+                      name="questionnaire_id"
+                      value={formData.questionnaire_id}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+                    >
+                      <option value="">Select a questionnaire (optional)</option>
+                      {questionnaires.map((q) => (
+                        <option key={q.id} value={q.id}>{q.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">or upload new</span>
+                    </div>
+                  </div>
+
+                  <div
+                    className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                    onClick={() => questionnaireFileRef.current?.click()}
                   >
-                    <option value="">Select a questionnaire (optional)</option>
-                    <option value="standard">Standard Due Diligence</option>
-                    <option value="financial">Financial Analysis</option>
-                    <option value="legal">Legal Compliance</option>
-                    <option value="technical">Technical Assessment</option>
-                  </select>
+                    {questionnaireFile ? (
+                      <p className="text-sm text-primary font-medium">{questionnaireFile.name}</p>
+                    ) : (
+                      <>
+                        <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
+                        <p className="text-sm text-muted-foreground">Upload a questionnaire PDF or DOCX to parse it into questions</p>
+                      </>
+                    )}
+                    <input
+                      ref={questionnaireFileRef}
+                      type="file"
+                      accept=".pdf,.docx"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        if (f) handleQuestionnaireUpload(f)
+                        e.target.value = ''
+                      }}
+                    />
+                  </div>
+
+                  {uploadingQuestionnaire && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <span className="animate-spin inline-block w-3 h-3 border-2 border-primary border-t-transparent rounded-full" />
+                      Parsing questionnaire into questions...
+                    </p>
+                  )}
+
                   <p className="text-xs text-muted-foreground">
-                    You can customize or change the questionnaire later after creating the project
+                    You can change the questionnaire later from the project detail page.
                   </p>
                 </div>
               </CardContent>

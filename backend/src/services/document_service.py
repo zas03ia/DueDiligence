@@ -1,6 +1,7 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
+from src.utils.uuid_utils import as_uuid
 from src.models.db_models import Document, Request
 from src.models.schemas import DocumentCreate
 from src.models.enums import RequestStatus, DocumentType
@@ -16,15 +17,18 @@ class DocumentService:
     
     def create_document(self, document_data: DocumentCreate) -> Document:
         """Create a new document record"""
-        document = Document(**document_data.dict())
+        data = document_data.model_dump() if hasattr(document_data, "model_dump") else document_data.dict()
+        if "metadata" in data:
+            data["document_metadata"] = data.pop("metadata")
+        document = Document(**data)
         self.db.add(document)
         self.db.commit()
         self.db.refresh(document)
         return document
     
-    def get_document(self, document_id: UUID) -> Optional[Document]:
+    def get_document(self, document_id: Union[str, UUID]) -> Optional[Document]:
         """Get document by ID"""
-        return self.db.query(Document).filter(Document.id == document_id).first()
+        return self.db.query(Document).filter(Document.id == as_uuid(document_id)).first()
     
     def get_documents(self, skip: int = 0, limit: int = 100) -> List[Document]:
         """Get all documents with pagination"""
@@ -34,7 +38,7 @@ class DocumentService:
         """Get documents by type"""
         return self.db.query(Document).filter(Document.file_type == file_type).all()
     
-    def update_document_indexed(self, document_id: UUID, indexed: bool = True) -> bool:
+    def update_document_indexed(self, document_id: Union[str, UUID], indexed: bool = True) -> bool:
         """Update document indexed status"""
         document = self.get_document(document_id)
         if not document:
@@ -44,7 +48,7 @@ class DocumentService:
         self.db.commit()
         return True
     
-    def delete_document(self, document_id: UUID) -> bool:
+    def delete_document(self, document_id: Union[str, UUID]) -> bool:
         """Delete document and file"""
         document = self.get_document(document_id)
         if not document:
@@ -62,7 +66,7 @@ class DocumentService:
         self.db.commit()
         return True
     
-    def get_file_path(self, document_id: UUID) -> Optional[str]:
+    def get_file_path(self, document_id: Union[str, UUID]) -> Optional[str]:
         """Get file path for document"""
         document = self.get_document(document_id)
         return document.file_path if document else None
@@ -78,7 +82,7 @@ class DocumentService:
         }
         return type_mapping.get(ext)
     
-    def create_indexing_request(self, document_id: UUID) -> Request:
+    def create_indexing_request(self, document_id: Union[str, UUID]) -> Request:
         """Create indexing request for document"""
         request = Request(
             request_type="INDEX_DOCUMENT",

@@ -5,9 +5,14 @@ from src.storage.database import get_db
 from src.services.answer_generation_service import get_answer_generation_service
 from src.services.evaluation_service import get_evaluation_service
 from src.models.schemas import (
-    Answer, AnswerUpdate, GenerationRequest, EvaluationRequest, 
-    EvaluationResponse, ProjectResponse
+    Answer as AnswerSchema,
+    AnswerUpdate,
+    GenerationRequest,
+    EvaluationRequest,
+    EvaluationResponse,
+    ProjectResponse,
 )
+from src.models.db_models import Answer as AnswerModel
 from src.utils.exceptions import GenerationError, DueDiligenceException
 from src.workers.answer_worker import generate_single_answer_task, generate_all_answers_task
 
@@ -118,7 +123,7 @@ async def generate_all_answers_async(
         raise HTTPException(status_code=500, detail=f"Failed to start background task: {str(e)}")
 
 
-@router.get("/{answer_id}", response_model=Answer)
+@router.get("/{answer_id}", response_model=AnswerSchema)
 async def get_answer(
     answer_id: str,
     db: Session = Depends(get_db)
@@ -126,14 +131,18 @@ async def get_answer(
     """Get answer by ID"""
     try:
         answer_service = get_answer_generation_service(db)
-        answer_with_context = answer_service.get_answer_with_context(
-            answer_with_context["answer"]["project_id"], 
-            answer_id
-        )
-        
-        if not answer_with_context or "error" in answer_with_context:
+        answer = answer_service.get_answer(answer_id)
+        if not answer:
             raise HTTPException(status_code=404, detail="Answer not found")
-        
+
+        answer_with_context = answer_service.get_answer_with_context(
+            str(answer.project_id),
+            str(answer.question_id),
+        )
+
+        if "error" in answer_with_context:
+            raise HTTPException(status_code=404, detail="Answer not found")
+
         return answer_with_context["answer"]
         
     except HTTPException:
@@ -142,7 +151,7 @@ async def get_answer(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.put("/{answer_id}", response_model=Answer)
+@router.put("/{answer_id}", response_model=AnswerSchema)
 async def update_answer(
     answer_id: str,
     answer_update: AnswerUpdate,
@@ -153,7 +162,7 @@ async def update_answer(
         answer_service = get_answer_generation_service(db)
         
         # Get answer to find project and question IDs
-        answer = db.query(Answer).filter(Answer.id == answer_id).first()
+        answer = db.query(AnswerModel).filter(AnswerModel.id == answer_id).first()
         if not answer:
             raise HTTPException(status_code=404, detail="Answer not found")
         
@@ -191,7 +200,7 @@ async def confirm_answer(
         answer_service = get_answer_generation_service(db)
         
         # Get answer to find project and question IDs
-        answer = db.query(Answer).filter(Answer.id == answer_id).first()
+        answer = db.query(AnswerModel).filter(AnswerModel.id == answer_id).first()
         if not answer:
             raise HTTPException(status_code=404, detail="Answer not found")
         
@@ -219,7 +228,7 @@ async def reject_answer(
         answer_service = get_answer_generation_service(db)
         
         # Get answer to find project and question IDs
-        answer = db.query(Answer).filter(Answer.id == answer_id).first()
+        answer = db.query(AnswerModel).filter(AnswerModel.id == answer_id).first()
         if not answer:
             raise HTTPException(status_code=404, detail="Answer not found")
         
@@ -250,7 +259,7 @@ async def regenerate_answer(
         answer_service = get_answer_generation_service(db)
         
         # Get answer to find project and question IDs
-        answer = db.query(Answer).filter(Answer.id == answer_id).first()
+        answer = db.query(AnswerModel).filter(AnswerModel.id == answer_id).first()
         if not answer:
             raise HTTPException(status_code=404, detail="Answer not found")
         
@@ -273,7 +282,7 @@ async def regenerate_answer(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.get("/project/{project_id}", response_model=List[Answer])
+@router.get("/project/{project_id}", response_model=List[AnswerSchema])
 async def get_project_answers(
     project_id: str,
     db: Session = Depends(get_db)

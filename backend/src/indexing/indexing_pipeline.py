@@ -178,11 +178,15 @@ class IndexingPipeline:
                 "indexed": document.indexed,
                 "index_statistics": index_stats,
                 "file_size": document.file_size,
-                "metadata": document.metadata
+                "metadata": document.document_metadata or {},
             }
             
         except Exception as e:
             return {"error": f"Failed to get index info: {str(e)}"}
+
+    def get_document_chunks(self, document_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get indexed chunks for a document"""
+        return vector_index_manager.get_document_chunks(document_id, limit)
     
     def search_documents(self, query_text: str, document_ids: Optional[List[str]] = None, 
                         top_k: int = 10) -> List[Dict[str, Any]]:

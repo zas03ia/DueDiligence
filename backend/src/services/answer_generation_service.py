@@ -7,6 +7,9 @@ from src.services.llm_service import llm_service
 from src.indexing.vector_index import vector_index_manager
 from src.indexing.indexing_pipeline import IndexingPipeline
 from src.utils.exceptions import GenerationError
+from src.utils.uuid_utils import as_uuid
+from src.services.answer_service import AnswerService
+from src.models.schemas import AnswerUpdate
 import time
 
 
@@ -16,6 +19,24 @@ class AnswerGenerationService:
     def __init__(self, db: Session):
         self.db = db
         self.indexing_pipeline = IndexingPipeline(db)
+        self._answer_service = AnswerService(db)
+
+    def get_answer(self, answer_id: str):
+        return self._answer_service.get_answer(answer_id)
+
+    def get_answers_by_project(self, project_id: str):
+        return self._answer_service.get_answers_by_project(project_id)
+
+    def get_answer_by_question(self, project_id: str, question_id: str):
+        return self._answer_service.get_answer_by_question(project_id, question_id)
+
+    def update_answer(self, answer_id: str, answer_data: AnswerUpdate):
+        return self._answer_service.update_answer(answer_id, answer_data)
+
+    def get_answer_statistics(self, project_id: str):
+        stats = self._answer_service.get_answer_statistics(project_id)
+        stats["total"] = sum(stats.values())
+        return stats
     
     def generate_single_answer(self, project_id: str, question_id: str, 
                              use_cached: bool = True) -> Dict[str, Any]:

@@ -1,6 +1,7 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
+from src.utils.uuid_utils import as_uuid
 from src.models.db_models import Project, Questionnaire, Question, Answer
 from src.models.schemas import ProjectCreate, ProjectUpdate
 from src.models.enums import ProjectStatus
@@ -14,27 +15,36 @@ class ProjectService:
     
     def create_project(self, project_data: ProjectCreate) -> Project:
         """Create a new project"""
-        project = Project(**project_data.dict())
+        payload = (
+            project_data.model_dump()
+            if hasattr(project_data, "model_dump")
+            else project_data.dict()
+        )
+        project = Project(**payload)
         self.db.add(project)
         self.db.commit()
         self.db.refresh(project)
         return project
     
-    def get_project(self, project_id: UUID) -> Optional[Project]:
+    def get_project(self, project_id: Union[str, UUID]) -> Optional[Project]:
         """Get project by ID"""
-        return self.db.query(Project).filter(Project.id == project_id).first()
+        return self.db.query(Project).filter(Project.id == as_uuid(project_id)).first()
     
     def get_projects(self, skip: int = 0, limit: int = 100) -> List[Project]:
         """Get all projects with pagination"""
         return self.db.query(Project).offset(skip).limit(limit).all()
     
-    def update_project(self, project_id: UUID, project_data: ProjectUpdate) -> Optional[Project]:
+    def update_project(self, project_id: Union[str, UUID], project_data: ProjectUpdate) -> Optional[Project]:
         """Update project"""
         project = self.get_project(project_id)
         if not project:
             return None
         
-        update_data = project_data.dict(exclude_unset=True)
+        update_data = (
+            project_data.model_dump(exclude_unset=True)
+            if hasattr(project_data, "model_dump")
+            else project_data.dict(exclude_unset=True)
+        )
         for field, value in update_data.items():
             setattr(project, field, value)
         
@@ -42,7 +52,7 @@ class ProjectService:
         self.db.refresh(project)
         return project
     
-    def delete_project(self, project_id: UUID) -> bool:
+    def delete_project(self, project_id: Union[str, UUID]) -> bool:
         """Delete project"""
         project = self.get_project(project_id)
         if not project:
@@ -52,7 +62,7 @@ class ProjectService:
         self.db.commit()
         return True
     
-    def get_project_with_details(self, project_id: UUID) -> Optional[dict]:
+    def get_project_with_details(self, project_id: Union[str, UUID]) -> Optional[dict]:
         """Get project with questions and answers"""
         project = self.get_project(project_id)
         if not project:
@@ -66,17 +76,19 @@ class ProjectService:
             ).order_by(Question.order).all()
         
         # Get answers
+        project_uuid = as_uuid(project_id)
         answers = self.db.query(Answer).filter(
-            Answer.project_id == project_id
+            Answer.project_id == project_uuid
         ).all()
         
         return {
             "project": project,
             "questions": questions,
-            "answers": answers
+            "answers": answers,
+            "status": project.status,
         }
     
-    def mark_project_outdated(self, project_id: UUID) -> bool:
+    def mark_project_outdated(self, project_id: Union[str, UUID]) -> bool:
         """Mark project as outdated when new documents are added"""
         project = self.get_project(project_id)
         if not project:

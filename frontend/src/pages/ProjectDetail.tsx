@@ -1,14 +1,15 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Play, CheckCircle, XCircle, RefreshCw, FileText,
-  BarChart3, Activity, Sparkles, ArrowRight, AlertTriangle, Info,
+  BarChart3, Activity, Sparkles, ArrowRight, AlertTriangle, Info, Upload, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores/projectStore'
 import { useAnswerStore } from '@/stores/answerStore'
 import PageHeader from '@/components/PageHeader'
 import toast from 'react-hot-toast'
+import { apiClient } from '@/services/api'
 import { formatDate, getStatusColor, getConfidenceColor } from '@/lib/utils'
 
 export default function ProjectDetail() {
@@ -16,6 +17,10 @@ export default function ProjectDetail() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<'questions' | 'answers' | 'statistics'>('questions')
   const [generationProgress, setGenerationProgress] = useState<{ answered: number; total: number } | null>(null)
+  const [questionnaires, setQuestionnaires] = useState<{ id: string; name: string; question_count: number }[]>([])
+  const [assigningQuestionnaire, setAssigningQuestionnaire] = useState(false)
+  const [uploadingQuestionnaire, setUploadingQuestionnaire] = useState(false)
+  const questionnaireFileRef = useRef<HTMLInputElement>(null)
   const {
     fetchProjectDetails,
     generateAnswers,
@@ -32,6 +37,39 @@ export default function ProjectDetail() {
   useEffect(() => {
     if (id) fetchProjectDetails(id)
   }, [id, fetchProjectDetails])
+
+  useEffect(() => {
+    apiClient.getQuestionnaires().then(setQuestionnaires).catch(() => {})
+  }, [])
+
+  const handleAssignQuestionnaire = async (questionnaireId: string) => {
+    if (!id) return
+    try {
+      await apiClient.setProjectQuestionnaire(id, questionnaireId)
+      toast.success('Questionnaire assigned')
+      setAssigningQuestionnaire(false)
+      fetchProjectDetails(id)
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Failed to assign questionnaire')
+    }
+  }
+
+  const handleQuestionnaireUpload = async (file: File) => {
+    setUploadingQuestionnaire(true)
+    try {
+      toast.loading('Parsing questionnaire...', { id: 'q-upload' })
+      const result = await apiClient.uploadQuestionnaire(file)
+      toast.success(`Parsed ${result.total_questions} questions`, { id: 'q-upload' })
+      const updated = await apiClient.getQuestionnaires()
+      setQuestionnaires(updated)
+      // Auto-assign the newly uploaded questionnaire
+      await handleAssignQuestionnaire(result.questionnaire_id)
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Failed to parse questionnaire', { id: 'q-upload' })
+    } finally {
+      setUploadingQuestionnaire(false)
+    }
+  }
 
   const { questions, answers, answerStats } = useMemo(() => {
     const q = projectDetails?.questions || []
@@ -115,7 +153,7 @@ export default function ProjectDetail() {
     if (project.status === 'GENERATING')
       return { icon: Info, color: 'bg-blue-50 border-blue-200 text-blue-800', message: 'Answer generation is running in the background. Check Request Status to track progress.' }
     if (questions.length === 0)
-      return { icon: Info, color: 'bg-blue-50 border-blue-200 text-blue-800', message: 'No questions yet. This project needs a questionnaire assigned. Contact your admin to upload and parse a questionnaire PDF.' }
+      return { icon: Info, color: 'bg-blue-50 border-blue-200 text-blue-800', message: 'No questions yet. Click the "Questionnaire" button above to upload a questionnaire PDF/DOCX or assign an existing one.' }
     if (answers.length === 0)
       return { icon: ArrowRight, color: 'bg-primary/5 border-primary/20 text-primary', message: `${questions.length} questions are ready. Click "Generate All" to have the AI answer them using your indexed documents.` }
     if (answerStats.pending > 0)
@@ -156,6 +194,9 @@ export default function ProjectDetail() {
       <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${id}/documents`)}>
         <FileText className="w-4 h-4 mr-2" /> Documents
       </Button>
+      <Button variant="outline" size="sm" onClick={() => setAssigningQuestionnaire(v => !v)}>
+        <Upload className="w-4 h-4 mr-2" /> Questionnaire
+      </Button>
       <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${id}/generate`)}>
         <Sparkles className="w-4 h-4 mr-2" /> Generate
       </Button>
@@ -165,7 +206,7 @@ export default function ProjectDetail() {
       <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${id}/requests`)}>
         <Activity className="w-4 h-4 mr-2" /> Status
       </Button>
-      <Button onClick={handleGenerateAnswers} disabled={projectLoading}>
+      <Button onClick={handleGenerateAnswers} disabled={projectLoading || questions.length === 0}>
         <Play className="w-4 h-4 mr-2" /> Generate All
       </Button>
       <Button variant="destructive" size="sm" onClick={handleDelete}>
@@ -221,6 +262,77 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {assigningQuestionnaire && (
+          <div className="mb-6 bg-card border rounded-xl p-5">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold">Assign Questionnaire</h3>
+              <Button variant="ghost" size="sm" onClick={() => setAssigningQuestionnaire(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {questionnaires.length > 0 && (
+              <div className="space-y-2 mb-4">
+                {questionnaires.map((q) => (
+                  <div
+                    key={q.id}
+                    className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer hover:border-primary/50 transition-colors ${
+                      project.questionnaire_id === q.id ? 'border-primary bg-primary/5' : ''
+                    }`}
+                    onClick={() => handleAssignQuestionnaire(q.id)}
+                  >
+                    <div>
+                      <p className="font-medium text-sm">{q.name}</p>
+                      <p className="text-xs text-muted-foreground">{q.question_count} questions</p>
+                    </div>
+                    {project.questionnaire_id === q.id && (
+                      <CheckCircle className="w-4 h-4 text-primary shrink-0" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="relative mb-3">
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">
+                  {questionnaires.length > 0 ? 'or upload new' : 'upload a questionnaire PDF or DOCX'}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:border-primary/50 transition-colors"
+              onClick={() => questionnaireFileRef.current?.click()}
+            >
+              {uploadingQuestionnaire ? (
+                <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
+                  <span className="animate-spin inline-block w-3 h-3 border-2 border-primary border-t-transparent rounded-full" />
+                  Parsing questionnaire...
+                </p>
+              ) : (
+                <>
+                  <Upload className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
+                  <p className="text-sm text-muted-foreground">Click to upload a questionnaire PDF or DOCX</p>
+                  <p className="text-xs text-muted-foreground mt-1">It will be parsed into questions and assigned to this project automatically</p>
+                </>
+              )}
+              <input
+                ref={questionnaireFileRef}
+                type="file"
+                accept=".pdf,.docx"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) handleQuestionnaireUpload(f)
+                  e.target.value = ''
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="border-b border-border mb-6">
           <nav className="flex gap-6">
             {(['questions', 'answers', 'statistics'] as const).map((tab) => (
@@ -242,7 +354,16 @@ export default function ProjectDetail() {
         {activeTab === 'questions' && (
           <div className="space-y-4">
             {questions.length === 0 ? (
-              <p className="text-muted-foreground text-center py-12">No questions in this project yet.</p>
+              <div className="text-center py-16 border-2 border-dashed rounded-xl">
+                <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                <p className="font-medium mb-1">No questions yet</p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Assign a questionnaire to this project to get started.
+                </p>
+                <Button onClick={() => setAssigningQuestionnaire(true)}>
+                  <Upload className="w-4 h-4 mr-2" /> Upload or Assign Questionnaire
+                </Button>
+              </div>
             ) : (
               questions.map((question) => {
                 const answer = answers.find((a) => a.question_id === question.id)

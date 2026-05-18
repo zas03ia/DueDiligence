@@ -6,6 +6,7 @@ import os
 import uuid
 import json
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from src.storage.database import get_db, SessionLocal
 from src.services.document_service import DocumentService
@@ -17,17 +18,18 @@ from src.config import settings
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
+# Single-thread executor so indexing jobs are serialised and don't race on shared resources
+_indexing_executor = ThreadPoolExecutor(max_workers=1)
 
-def _run_indexing_background(document_id: str, strategy_value: str):
-    """Run indexing in a background task with its own DB session"""
+
+def _run_indexing_sync(document_id: str, strategy_value: str):
+    """Blocking indexing — must be called via run_in_executor."""
     db = SessionLocal()
     try:
-        from src.indexing.indexing_pipeline import IndexingPipeline
-        from src.models.enums import ChunkingStrategy
         pipeline = IndexingPipeline(db)
         pipeline.index_document(document_id, ChunkingStrategy(strategy_value))
     except Exception as e:
-        print(f"Background indexing failed for {document_id}: {e}")
+        print(f"Indexing failed for {document_id}: {e}")
     finally:
         db.close()
 
@@ -71,12 +73,13 @@ async def upload_document(
         document = document_service.create_document(document_data)
 
         if auto_index:
-            # Validate strategy before queuing so we fail fast
             try:
                 ChunkingStrategy(chunking_strategy)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid chunking strategy")
-            background_tasks.add_task(_run_indexing_background, str(document.id), chunking_strategy)
+            asyncio.get_event_loop().run_in_executor(
+                _indexing_executor, _run_indexing_sync, str(document.id), chunking_strategy
+            )
 
         return document
 
@@ -145,67 +148,66 @@ async def get_document(
 @router.post("/{document_id}/index")
 async def index_document(
     document_id: str,
-    background_tasks: BackgroundTasks,
     chunking_strategy: str = "PARAGRAPH",
     db: Session = Depends(get_db)
 ):
-    """Queue document indexing as a background task. Poll GET /{id} or stream /{id}/index/stream for progress."""
+    """Queue document indexing in a thread. Stream progress via /{id}/index/stream."""
     try:
         ChunkingStrategy(chunking_strategy)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid chunking strategy")
 
-    document_service = DocumentService(db)
-    if not document_service.get_document(document_id):
+    if not DocumentService(db).get_document(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    background_tasks.add_task(_run_indexing_background, document_id, chunking_strategy)
-    return {"success": True, "message": "Indexing started in background", "document_id": document_id}
+    asyncio.get_event_loop().run_in_executor(_indexing_executor, _run_indexing_sync, document_id, chunking_strategy)
+    return {"success": True, "message": "Indexing started", "document_id": document_id}
 
 
 @router.post("/{document_id}/reindex")
 async def reindex_document(
     document_id: str,
-    background_tasks: BackgroundTasks,
     chunking_strategy: str = "PARAGRAPH",
     db: Session = Depends(get_db)
 ):
-    """Queue document reindexing as a background task."""
+    """Queue document reindexing in a thread."""
     try:
         ChunkingStrategy(chunking_strategy)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid chunking strategy")
 
-    document_service = DocumentService(db)
-    if not document_service.get_document(document_id):
+    if not DocumentService(db).get_document(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    background_tasks.add_task(_run_indexing_background, document_id, chunking_strategy)
-    return {"success": True, "message": "Reindexing started in background", "document_id": document_id}
+    asyncio.get_event_loop().run_in_executor(_indexing_executor, _run_indexing_sync, document_id, chunking_strategy)
+    return {"success": True, "message": "Reindexing started", "document_id": document_id}
 
 
 @router.get("/{document_id}/index/stream")
-async def stream_indexing_status(
-    document_id: str,
-    db: Session = Depends(get_db)
-):
-    """SSE stream that emits the document's indexed status every 2s until indexed=true or timeout."""
+async def stream_indexing_status(document_id: str):
+    """SSE stream emitting indexed status every 2s until indexed=true or timeout."""
     async def event_generator():
-        document_service = DocumentService(db)
         for _ in range(60):  # max 2 minutes
-            doc = document_service.get_document(document_id)
-            if not doc:
-                yield f"data: {json.dumps({'error': 'Document not found'})}\n\n"
-                return
-            payload = {"document_id": document_id, "indexed": doc.indexed}
-            yield f"data: {json.dumps(payload)}\n\n"
-            if doc.indexed:
-                return
+            tick_db = SessionLocal()
+            try:
+                doc = DocumentService(tick_db).get_document(document_id)
+                if not doc:
+                    yield f"data: {json.dumps({'error': 'Document not found'})}\n\n"
+                    return
+                payload = {"document_id": document_id, "indexed": doc.indexed}
+                yield f"data: {json.dumps(payload)}\n\n"
+                if doc.indexed:
+                    return
+            finally:
+                tick_db.close()
             await asyncio.sleep(2)
         yield f"data: {json.dumps({'document_id': document_id, 'indexed': False, 'timeout': True})}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.delete("/{document_id}")

@@ -8,49 +8,72 @@ import PageHeader from '@/components/PageHeader'
 import toast from 'react-hot-toast'
 import { getStatusColor, getConfidenceColor } from '@/lib/utils'
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
 export default function GenerateAnswers() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [selectedQuestions, setSelectedQuestions] = useState<string[]>([])
   const [generationMode, setGenerationMode] = useState<'all' | 'selected'>('all')
-  
-  const { 
-    fetchProjectDetails, 
-    generateAnswers, 
-    currentProject,
+  const [generating, setGenerating] = useState(false)
+  const [progress, setProgress] = useState<{ answered: number; total: number } | null>(null)
+
+  const {
+    fetchProjectDetails,
+    generateAnswers,
     projectDetails,
     isLoading: projectLoading,
-    error: projectError 
+    error: projectError
   } = useProjectStore()
-  
-  const { 
-    confirmAnswer, 
-    rejectAnswer, 
-    regenerateAnswer,
-    updateAnswer 
-  } = useAnswerStore()
+
+  const { confirmAnswer, rejectAnswer, regenerateAnswer } = useAnswerStore()
 
   useEffect(() => {
-    if (id) {
-      fetchProjectDetails(id)
-    }
+    if (id) fetchProjectDetails(id)
   }, [id, fetchProjectDetails])
 
   const handleGenerateAnswers = async () => {
     if (!id) return
+
     const questionIds = generationMode === 'selected' ? selectedQuestions : undefined
+
+    if (generationMode === 'selected' && selectedQuestions.length === 0) {
+      toast.error('Select at least one question first')
+      return
+    }
+
     try {
+      setGenerating(true)
       toast.loading('Starting answer generation...', { id: 'gen' })
-      const result = await generateAnswers(id, questionIds)
-      toast.success(
-        result?.task_id
-          ? 'Generation started in background. Check Request Status.'
-          : 'Answers generated successfully',
-        { id: 'gen' }
-      )
-      if (result?.task_id) navigate(`/projects/${id}/requests`)
+      await generateAnswers(id, questionIds)
+      toast.success('Generation running in background...', { id: 'gen' })
+
+      // Open SSE stream to track progress and refresh when done
+      let completed = false
+      const es = new EventSource(`${API_BASE}/api/v1/projects/${id}/generate-answers/stream`)
+      es.onmessage = (e) => {
+        const data = JSON.parse(e.data)
+        setProgress({ answered: data.answered, total: data.total })
+        if (data.done) {
+          completed = true
+          es.close()
+          setGenerating(false)
+          setProgress(null)
+          fetchProjectDetails(id)
+          toast.success(
+            data.status === 'ERROR' ? 'Generation finished with errors' : 'Answers generated successfully'
+          )
+        }
+      }
+      es.onerror = () => {
+        es.close()
+        setGenerating(false)
+        setProgress(null)
+        if (!completed) fetchProjectDetails(id)
+      }
     } catch {
-      toast.error('Failed to generate answers', { id: 'gen' })
+      setGenerating(false)
+      toast.error('Failed to start generation', { id: 'gen' })
     }
   }
 
@@ -125,12 +148,12 @@ export default function GenerateAnswers() {
             </Button>
             <Button
               onClick={handleGenerateAnswers}
-              disabled={projectLoading || projectDetails?.project?.status === 'GENERATING'}
+              disabled={generating || projectLoading || projectDetails?.project?.status === 'GENERATING'}
             >
-              {projectLoading ? (
-                <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-foreground mr-2" />Processing...</>
+              {generating ? (
+                <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-foreground mr-2" />Generating...</>
               ) : (
-                <><Play className="w-4 h-4 mr-2" />Generate {generationMode === 'selected' ? selectedQuestions.length : 'All'} Answers</>
+                <><Play className="w-4 h-4 mr-2" />Generate {generationMode === 'selected' ? `${selectedQuestions.length} Selected` : 'All'} Answers</>
               )}
             </Button>
           </>
@@ -146,6 +169,21 @@ export default function GenerateAnswers() {
             {questions.length} questions • {answerStats.confirmed} confirmed
           </span>
         </div>
+
+        {progress && (
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex justify-between text-sm font-medium text-blue-800 mb-2">
+              <span>Generating answers...</span>
+              <span>{progress.answered} / {progress.total}</span>
+            </div>
+            <div className="w-full bg-blue-100 rounded-full h-2">
+              <div
+                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                style={{ width: progress.total > 0 ? `${(progress.answered / progress.total) * 100}%` : '0%' }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Generation Controls */}
         <div className="bg-card rounded-lg border p-6 mb-8">

@@ -38,23 +38,24 @@ class AnswerGenerationService:
         stats["total"] = sum(stats.values())
         return stats
     
-    def generate_single_answer(self, project_id: str, question_id: str, 
+    def generate_single_answer(self, project_id: str, question_id: str,
                              use_cached: bool = True) -> Dict[str, Any]:
         """Generate answer for a single question"""
         try:
-            # Get project and question
-            project = self.db.query(Project).filter(Project.id == project_id).first()
-            question = self.db.query(Question).filter(Question.id == question_id).first()
-            
+            project_uuid = as_uuid(project_id)
+            question_uuid = as_uuid(question_id)
+
+            project = self.db.query(Project).filter(Project.id == project_uuid).first()
+            question = self.db.query(Question).filter(Question.id == question_uuid).first()
+
             if not project or not question:
                 raise GenerationError("Project or question not found")
-            
-            # Check if answer already exists
+
             existing_answer = self.db.query(Answer).filter(
-                Answer.project_id == project_id,
-                Answer.question_id == question_id
+                Answer.project_id == project_uuid,
+                Answer.question_id == question_uuid
             ).first()
-            
+
             if existing_answer and use_cached:
                 return self._format_answer_response(existing_answer)
             
@@ -95,15 +96,13 @@ class AnswerGenerationService:
             }
             
             if existing_answer:
-                # Update existing answer
                 for key, value in answer_data.items():
                     setattr(existing_answer, key, value)
                 answer = existing_answer
             else:
-                # Create new answer
                 answer = Answer(
-                    project_id=project_id,
-                    question_id=question_id,
+                    project_id=project_uuid,
+                    question_id=question_uuid,
                     **answer_data
                 )
                 self.db.add(answer)
@@ -120,35 +119,33 @@ class AnswerGenerationService:
     def generate_all_answers(self, project_id: str, question_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """Generate answers for all questions in a project"""
         try:
-            # Get project
-            project = self.db.query(Project).filter(Project.id == project_id).first()
+            project_uuid = as_uuid(project_id)
+            project = self.db.query(Project).filter(Project.id == project_uuid).first()
             if not project:
                 raise GenerationError("Project not found")
-            
-            # Get questions
+
             if question_ids:
+                question_uuids = [as_uuid(qid) for qid in question_ids]
                 questions = self.db.query(Question).filter(
-                    Question.id.in_(question_ids),
+                    Question.id.in_(question_uuids),
                     Question.questionnaire_id == project.questionnaire_id
                 ).all()
             else:
                 questions = self.db.query(Question).filter(
                     Question.questionnaire_id == project.questionnaire_id
                 ).all()
-            
+
             if not questions:
                 return {"success": False, "message": "No questions found for project"}
-            
-            # Get document IDs
+
             document_ids = self._get_project_document_ids(project)
             if not document_ids:
                 return self._create_no_context_project_answers(project_id, questions)
-            
-            # Generate answers for each question
+
             results = []
             successful = 0
             failed = 0
-            
+
             for question in questions:
                 try:
                     answer_result = self.generate_single_answer(project_id, str(question.id), use_cached=False)
@@ -164,17 +161,10 @@ class AnswerGenerationService:
                         "error": str(e)
                     })
                     failed += 1
-            
-            # Update project status
-            if failed == 0:
-                project.status = "COMPLETED"
-            elif successful > 0:
-                project.status = "COMPLETED"  # Partial completion
-            else:
-                project.status = "ERROR"
-            
+
+            project.status = "COMPLETED" if successful > 0 else "ERROR"
             self.db.commit()
-            
+
             return {
                 "success": True,
                 "project_id": project_id,
@@ -183,7 +173,6 @@ class AnswerGenerationService:
                 "failed": failed,
                 "results": results
             }
-            
         except Exception as e:
             self.db.rollback()
             raise GenerationError(f"Failed to generate all answers: {str(e)}")
@@ -192,39 +181,33 @@ class AnswerGenerationService:
         """Regenerate answer for a specific question"""
         return self.generate_single_answer(project_id, question_id, use_cached=False)
     
-    def update_manual_answer(self, project_id: str, question_id: str, 
+    def update_manual_answer(self, project_id: str, question_id: str,
                            manual_answer: str) -> Dict[str, Any]:
         """Update answer with manual input"""
         try:
             answer = self.db.query(Answer).filter(
-                Answer.project_id == project_id,
-                Answer.question_id == question_id
+                Answer.project_id == as_uuid(project_id),
+                Answer.question_id == as_uuid(question_id)
             ).first()
-            
             if not answer:
-                # Create new answer record
                 answer = Answer(
-                    project_id=project_id,
-                    question_id=question_id,
+                    project_id=as_uuid(project_id),
+                    question_id=as_uuid(question_id),
                     manual_answer=manual_answer,
                     status=AnswerStatus.MANUAL_UPDATED,
-                    confidence_score=1.0,  # Manual answers have full confidence
+                    confidence_score=1.0,
                     is_answerable=True,
                     answer_text=manual_answer
                 )
                 self.db.add(answer)
             else:
-                # Update existing answer
                 answer.manual_answer = manual_answer
                 answer.status = AnswerStatus.MANUAL_UPDATED
                 answer.confidence_score = 1.0
                 answer.is_answerable = True
-            
             self.db.commit()
             self.db.refresh(answer)
-            
             return self._format_answer_response(answer)
-            
         except Exception as e:
             self.db.rollback()
             raise GenerationError(f"Failed to update manual answer: {str(e)}")
@@ -233,42 +216,34 @@ class AnswerGenerationService:
         """Confirm an answer"""
         try:
             answer = self.db.query(Answer).filter(
-                Answer.project_id == project_id,
-                Answer.question_id == question_id
+                Answer.project_id == as_uuid(project_id),
+                Answer.question_id == as_uuid(question_id)
             ).first()
-            
             if answer:
                 answer.status = AnswerStatus.CONFIRMED
                 self.db.commit()
                 return True
-            
             return False
-            
         except Exception as e:
             self.db.rollback()
             raise GenerationError(f"Failed to confirm answer: {str(e)}")
-    
+
     def reject_answer(self, project_id: str, question_id: str, reason: Optional[str] = None) -> bool:
         """Reject an answer"""
         try:
             answer = self.db.query(Answer).filter(
-                Answer.project_id == project_id,
-                Answer.question_id == question_id
+                Answer.project_id == as_uuid(project_id),
+                Answer.question_id == as_uuid(question_id)
             ).first()
-            
             if answer:
                 answer.status = AnswerStatus.REJECTED
                 if reason:
-                    # Store reason in metadata or as a separate field
                     if not answer.citations:
                         answer.citations = []
                     answer.citations.append({"rejection_reason": reason})
-                
                 self.db.commit()
                 return True
-            
             return False
-            
         except Exception as e:
             self.db.rollback()
             raise GenerationError(f"Failed to reject answer: {str(e)}")
@@ -277,10 +252,9 @@ class AnswerGenerationService:
         """Get answer with full context and citations"""
         try:
             answer = self.db.query(Answer).filter(
-                Answer.project_id == project_id,
-                Answer.question_id == question_id
+                Answer.project_id == as_uuid(project_id),
+                Answer.question_id == as_uuid(question_id)
             ).first()
-            
             if not answer:
                 return {"error": "Answer not found"}
             
@@ -324,28 +298,26 @@ class AnswerGenerationService:
     def _create_no_context_answer(self, project_id: str, question_id: str, question: Question) -> Dict[str, Any]:
         """Create answer when no context is available"""
         answer = Answer(
-            project_id=project_id,
-            question_id=question_id,
+            project_id=as_uuid(project_id),
+            question_id=as_uuid(question_id),
             answer_text="Unable to answer: No relevant documents found in the project scope.",
             confidence_score=0.0,
             is_answerable=False,
             status=AnswerStatus.MISSING_DATA,
             citations=[]
         )
-        
         self.db.add(answer)
         self.db.commit()
         self.db.refresh(answer)
-        
         return self._format_answer_response(answer)
     
     def _create_no_context_project_answers(self, project_id: str, questions: List[Question]) -> Dict[str, Any]:
         """Create answers for all questions when no context is available"""
         results = []
-        
+        project_uuid = as_uuid(project_id)
         for question in questions:
             answer = Answer(
-                project_id=project_id,
+                project_id=project_uuid,
                 question_id=question.id,
                 answer_text="Unable to answer: No relevant documents found in the project scope.",
                 confidence_score=0.0,
@@ -353,12 +325,9 @@ class AnswerGenerationService:
                 status=AnswerStatus.MISSING_DATA,
                 citations=[]
             )
-            
             self.db.add(answer)
             results.append(self._format_answer_response(answer))
-        
         self.db.commit()
-        
         return {
             "success": True,
             "project_id": project_id,

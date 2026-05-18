@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from src.storage.database import get_db, SessionLocal
 from src.services.project_service import ProjectService
 from src.services.answer_generation_service import get_answer_generation_service
@@ -15,16 +17,19 @@ from src.utils.exceptions import DueDiligenceException
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
+# Single-thread executor so generation jobs are serialised
+_generation_executor = ThreadPoolExecutor(max_workers=1)
 
-def _run_generation_background(project_id: str, question_ids: list):
-    """Run answer generation in a background task with its own DB session"""
+
+def _run_generation_sync(project_id: str, question_ids: list):
+    """Blocking generation — must be called via run_in_threadpool or a thread."""
     db = SessionLocal()
     try:
         from src.services.answer_generation_service import get_answer_generation_service
         service = get_answer_generation_service(db)
         service.generate_all_answers(project_id, question_ids or None)
     except Exception as e:
-        print(f"Background generation failed for project {project_id}: {e}")
+        print(f"Generation failed for project {project_id}: {e}")
     finally:
         db.close()
 
@@ -137,33 +142,33 @@ async def generate_project_answers(
     async_processing: bool = True,
     db: Session = Depends(get_db)
 ):
-    """Queue answer generation as a background task. Stream progress via /{project_id}/generate-answers/stream."""
+    """Start answer generation. Runs in a thread so the event loop stays free for SSE streaming."""
     service = ProjectService(db)
     project = service.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     if async_processing:
-        background_tasks.add_task(_run_generation_background, project_id, question_ids or [])
+        # Run blocking generation in a thread pool so the event loop is free
+        # to serve the SSE stream concurrently
+        asyncio.get_event_loop().run_in_executor(
+            _generation_executor, _run_generation_sync, project_id, question_ids or []
+        )
         return {
             "success": True,
             "message": "Answer generation started in background",
             "project_id": project_id,
         }
     else:
-        answer_service = get_answer_generation_service(db)
-        return answer_service.generate_all_answers(project_id, question_ids)
+        result = await run_in_threadpool(_run_generation_sync, project_id, question_ids or [])
+        return {"success": True, "project_id": project_id}
 
 
 @router.get("/{project_id}/generate-answers/stream")
-async def stream_generation_progress(
-    project_id: str,
-    db: Session = Depends(get_db)
-):
+async def stream_generation_progress(project_id: str):
     """SSE stream emitting answer counts every 2s until generation completes."""
     async def event_generator():
         for _ in range(150):  # max 5 minutes
-            # Use a fresh session per tick to see committed changes
             tick_db = SessionLocal()
             try:
                 project = ProjectService(tick_db).get_project(project_id)
@@ -190,8 +195,11 @@ async def stream_generation_progress(
                 tick_db.close()
             await asyncio.sleep(2)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{project_id}/answers/statistics")

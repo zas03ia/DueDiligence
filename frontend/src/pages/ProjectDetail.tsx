@@ -97,10 +97,12 @@ export default function ProjectDetail() {
       // Open SSE stream for real-time progress
       const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
       const es = new EventSource(`${API_BASE}/api/v1/projects/${id}/generate-answers/stream`)
+      let completed = false
       es.onmessage = (e) => {
         const data = JSON.parse(e.data)
         setGenerationProgress({ answered: data.answered, total: data.total })
         if (data.done) {
+          completed = true
           es.close()
           setGenerationProgress(null)
           fetchProjectDetails(id)
@@ -109,7 +111,12 @@ export default function ProjectDetail() {
           )
         }
       }
-      es.onerror = () => { es.close(); setGenerationProgress(null); fetchProjectDetails(id) }
+      es.onerror = () => {
+        es.close()
+        setGenerationProgress(null)
+        // Only fetch if the stream closed without a done event (unexpected error)
+        if (!completed) fetchProjectDetails(id)
+      }
     } catch {
       toast.error('Failed to start generation', { id: 'gen' })
     }

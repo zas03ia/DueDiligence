@@ -142,33 +142,14 @@ export const useProjectStore = create<ProjectState>()(
 
       generateAnswers: async (projectId: string, questionIds?: string[]) => {
         set({ isLoading: true, error: undefined })
-        
         try {
           const result = await apiClient.generateProjectAnswers(projectId, questionIds)
-          if (result?.task_id) {
-            const stored = JSON.parse(localStorage.getItem('project_tasks') || '{}')
-            const tasks = stored[projectId] || []
-            tasks.unshift({
-              id: result.task_id,
-              request_type: 'GENERATE_ANSWERS',
-              status: 'RUNNING',
-              progress: 0,
-              project_id: projectId,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            stored[projectId] = tasks.slice(0, 20)
-            localStorage.setItem('project_tasks', JSON.stringify(stored))
-          }
-          if (get().projectDetails?.project.id === projectId) {
-            await get().fetchProjectDetails(projectId)
-          }
           set({ isLoading: false })
           return result
         } catch (error) {
-          set({ 
+          set({
             error: error instanceof Error ? error.message : 'Failed to generate answers',
-            isLoading: false 
+            isLoading: false
           })
           throw error
         }

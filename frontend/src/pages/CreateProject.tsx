@@ -87,15 +87,21 @@ export default function CreateProject() {
     try {
       toast.loading('Creating project...', { id: 'create-project' })
       
-      // Prepare project data to match backend expectations
       const projectData = {
         name: formData.name,
         description: formData.description,
-        document_scope: [], // Backend expects this field
-        questionnaire_id: formData.questionnaire_id || undefined
+        document_scope: [],
       }
       
       const project = await createProject(projectData)
+
+      if (formData.questionnaire_id) {
+        try {
+          await apiClient.setProjectQuestionnaire(project.id, formData.questionnaire_id)
+        } catch {
+          toast.error('Project created but failed to assign questionnaire. You can assign it from the project page.')
+        }
+      }
       
       toast.success('Project created successfully!', { id: 'create-project' })
       navigate(`/projects/${project.id}`)

@@ -141,6 +141,7 @@ class Answer(AnswerBase):
     id: str
     project_id: str
     manual_answer: Optional[str] = None
+    rejection_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -174,7 +175,7 @@ class Request(RequestBase):
     created_at: datetime
     updated_at: datetime
 
-    @field_serializer('id', 'project_id', 'document_id')
+    @field_serializer("id", "project_id", "document_id")
     def serialize_uuid(self, value: Optional[object]) -> Optional[str]:
         if value is None:
             return None

@@ -13,9 +13,7 @@ router = APIRouter(prefix="/api/v1/questionnaires", tags=["questionnaires"])
 
 @router.get("/")
 async def list_questionnaires(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     """List all available questionnaires"""
     questionnaires = db.query(Questionnaire).offset(skip).limit(limit).all()
@@ -25,7 +23,9 @@ async def list_questionnaires(
             "name": q.name,
             "description": q.description,
             "file_path": q.file_path,
-            "question_count": db.query(Question).filter(Question.questionnaire_id == q.id).count(),
+            "question_count": db.query(Question)
+            .filter(Question.questionnaire_id == q.id)
+            .count(),
             "created_at": q.created_at,
             "updated_at": q.updated_at,
         }
@@ -34,14 +34,11 @@ async def list_questionnaires(
 
 
 @router.get("/{questionnaire_id}")
-async def get_questionnaire(
-    questionnaire_id: str,
-    db: Session = Depends(get_db)
-):
+async def get_questionnaire(questionnaire_id: str, db: Session = Depends(get_db)):
     """Get a questionnaire with its questions"""
-    questionnaire = db.query(Questionnaire).filter(
-        Questionnaire.id == questionnaire_id
-    ).first()
+    questionnaire = (
+        db.query(Questionnaire).filter(Questionnaire.id == questionnaire_id).first()
+    )
     if not questionnaire:
         raise HTTPException(status_code=404, detail="Questionnaire not found")
 
@@ -73,10 +70,23 @@ async def get_questionnaire(
     }
 
 
+@router.delete("/{questionnaire_id}")
+async def delete_questionnaire(questionnaire_id: str, db: Session = Depends(get_db)):
+    """Delete a questionnaire and its questions"""
+    questionnaire = (
+        db.query(Questionnaire).filter(Questionnaire.id == questionnaire_id).first()
+    )
+    if not questionnaire:
+        raise HTTPException(status_code=404, detail="Questionnaire not found")
+
+    db.delete(questionnaire)
+    db.commit()
+    return {"success": True, "message": "Questionnaire deleted successfully"}
+
+
 @router.post("/upload")
 async def upload_questionnaire(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    file: UploadFile = File(...), db: Session = Depends(get_db)
 ):
     """Upload and parse a questionnaire PDF/DOCX into questions"""
     if not file.filename:
@@ -84,7 +94,9 @@ async def upload_questionnaire(
 
     suffix = Path(file.filename).suffix.lower()
     if suffix not in {".pdf", ".docx"}:
-        raise HTTPException(status_code=400, detail="Only PDF and DOCX questionnaires are supported")
+        raise HTTPException(
+            status_code=400, detail="Only PDF and DOCX questionnaires are supported"
+        )
 
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -100,4 +112,6 @@ async def upload_questionnaire(
         return result
     except Exception as e:
         dest.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Failed to parse questionnaire: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to parse questionnaire: {str(e)}"
+        )

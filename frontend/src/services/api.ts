@@ -96,19 +96,17 @@ class ApiClient {
   }
 
   async generateProjectAnswers(
-    projectId: string, 
-    questionIds?: string[], 
+    projectId: string,
+    questionIds?: string[],
     asyncProcessing = true
   ): Promise<any> {
+    const body: Record<string, any> = { async_processing: asyncProcessing }
+    if (questionIds && questionIds.length > 0) {
+      body.question_ids = questionIds
+    }
     const response = await this.client.post(
       `/api/v1/projects/${projectId}/generate-answers`,
-      null,
-      {
-        params: {
-          question_ids: questionIds,
-          async_processing: asyncProcessing,
-        },
-      }
+      body
     )
     return response.data
   }
@@ -126,9 +124,13 @@ class ApiClient {
   async setProjectQuestionnaire(projectId: string, questionnaireId: string): Promise<any> {
     const response = await this.client.post(
       `/api/v1/projects/${projectId}/questionnaire`,
-      null,
-      { params: { questionnaire_id: questionnaireId } }
+      { questionnaire_id: questionnaireId }
     )
+    return response.data
+  }
+
+  async markProjectOutdated(projectId: string): Promise<any> {
+    const response = await this.client.post(`/api/v1/projects/${projectId}/mark-outdated`)
     return response.data
   }
 

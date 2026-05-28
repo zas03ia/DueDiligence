@@ -22,11 +22,21 @@ def _serialize(r: Request) -> dict:
     }
 
 
+@router.get("/")
+async def list_requests(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    """List all requests/tasks, newest first"""
+    requests = (
+        db.query(Request)
+        .order_by(Request.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [_serialize(r) for r in requests]
+
+
 @router.get("/{request_id}")
-async def get_request(
-    request_id: str,
-    db: Session = Depends(get_db)
-):
+async def get_request(request_id: str, db: Session = Depends(get_db)):
     """Get a single request/task by ID"""
     request = db.query(Request).filter(Request.id == request_id).first()
     if not request:
@@ -36,10 +46,7 @@ async def get_request(
 
 @router.get("/project/{project_id}")
 async def get_project_requests(
-    project_id: str,
-    skip: int = 0,
-    limit: int = 50,
-    db: Session = Depends(get_db)
+    project_id: str, skip: int = 0, limit: int = 50, db: Session = Depends(get_db)
 ):
     """Get all requests/tasks for a project, newest first"""
     requests = (

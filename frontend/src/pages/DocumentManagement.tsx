@@ -4,6 +4,7 @@ import { Upload, FileText, Download, Search, Trash2, RefreshCw, X, Info } from '
 import { Button } from '@/components/ui/button'
 import { useDocumentStore } from '@/stores/documentStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { apiClient } from '@/services/api'
 import PageHeader from '@/components/PageHeader'
 import toast from 'react-hot-toast'
 import { Document } from '@/types'
@@ -44,6 +45,25 @@ export default function DocumentManagement() {
       toast.loading('Uploading...', { id: 'upload' })
       const doc = await uploadDocument(file, true, 'PARAGRAPH')
       setSelectedFile(doc)
+
+      if (projectId && project) {
+        const currentScope = project.document_scope || []
+        if (!currentScope.includes(doc.id)) {
+          try {
+            await apiClient.updateProject(projectId, {
+              document_scope: [...currentScope, doc.id],
+            })
+            const hasAnswers = (projectDetails?.answers?.length ?? 0) > 0
+            if (hasAnswers) {
+              await apiClient.markProjectOutdated(projectId)
+            }
+            fetchProjectDetails(projectId)
+          } catch {
+            toast.error('Document uploaded but failed to add to project scope.')
+          }
+        }
+      }
+
       toast.loading('Indexing in background...', { id: 'upload' })
 
       const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'

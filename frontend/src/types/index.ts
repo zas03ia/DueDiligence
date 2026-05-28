@@ -36,6 +36,7 @@ export interface Answer {
   question_id: string
   answer_text?: string
   manual_answer?: string
+  rejection_reason?: string | null
   confidence_score: number
   is_answerable: boolean
   citations: Citation[]
@@ -153,6 +154,7 @@ export interface ProjectWithDetails {
   project: Project
   questions: Question[]
   answers: Answer[]
+  status: ProjectStatus
 }
 
 export interface GenerationRequest {

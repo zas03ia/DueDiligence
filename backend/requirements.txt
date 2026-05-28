@@ -15,6 +15,7 @@ python-docx
 openpyxl
 python-pptx
 sentence-transformers
+nltk
 numpy
 pandas
 pytest>=8.0

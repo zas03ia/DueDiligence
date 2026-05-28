@@ -39,8 +39,12 @@ class Project(Base):
 
     # Relationships
     questionnaire = relationship("Questionnaire", back_populates="projects")
-    answers = relationship("Answer", back_populates="project")
-    requests = relationship("Request", back_populates="project")
+    answers = relationship(
+        "Answer", back_populates="project", cascade="all, delete-orphan"
+    )
+    requests = relationship(
+        "Request", back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class Questionnaire(Base):
@@ -55,7 +59,9 @@ class Questionnaire(Base):
 
     # Relationships
     projects = relationship("Project", back_populates="questionnaire")
-    questions = relationship("Question", back_populates="questionnaire")
+    questions = relationship(
+        "Question", back_populates="questionnaire", cascade="all, delete-orphan"
+    )
 
 
 class Question(Base):
@@ -106,6 +112,7 @@ class Answer(Base):
     confidence_score = Column(Float, nullable=False)
     is_answerable = Column(Boolean, nullable=False)
     citations = Column(JSON, default=list)
+    rejection_reason = Column(Text, nullable=True)
     status = Column(String(20), default=AnswerStatus.PENDING)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

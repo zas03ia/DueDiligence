@@ -1,4 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    BackgroundTasks,
+    Form,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -40,7 +48,7 @@ async def upload_document(
     file: UploadFile = File(...),
     auto_index: bool = Form(True),
     chunking_strategy: str = Form("PARAGRAPH"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Upload a document. Indexing runs in the background — check /documents/{id} for indexed status."""
     try:
@@ -68,7 +76,7 @@ async def upload_document(
             file_type=file_type,
             title=file.filename,
             file_path=str(file_path),
-            file_size=len(content)
+            file_size=len(content),
         )
         document = document_service.create_document(document_data)
 
@@ -78,7 +86,10 @@ async def upload_document(
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid chunking strategy")
             asyncio.get_event_loop().run_in_executor(
-                _indexing_executor, _run_indexing_sync, str(document.id), chunking_strategy
+                _indexing_executor,
+                _run_indexing_sync,
+                str(document.id),
+                chunking_strategy,
             )
 
         return document
@@ -97,12 +108,12 @@ async def get_documents(
     limit: int = 100,
     file_type: Optional[str] = None,
     indexed_only: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get documents with optional filtering"""
     try:
         document_service = DocumentService(db)
-        
+
         if file_type:
             try:
                 doc_type = DocumentType(file_type)
@@ -111,13 +122,13 @@ async def get_documents(
                 raise HTTPException(status_code=400, detail="Invalid file type")
         else:
             documents = document_service.get_documents(skip, limit)
-        
+
         # Filter by indexed status if requested
         if indexed_only:
             documents = [doc for doc in documents if doc.indexed]
-        
+
         return documents
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -125,20 +136,17 @@ async def get_documents(
 
 
 @router.get("/{document_id}", response_model=Document)
-async def get_document(
-    document_id: str,
-    db: Session = Depends(get_db)
-):
+async def get_document(document_id: str, db: Session = Depends(get_db)):
     """Get document by ID"""
     try:
         document_service = DocumentService(db)
         document = document_service.get_document(document_id)
-        
+
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
-        
+
         return document
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -149,7 +157,7 @@ async def get_document(
 async def index_document(
     document_id: str,
     chunking_strategy: str = "PARAGRAPH",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Queue document indexing in a thread. Stream progress via /{id}/index/stream."""
     try:
@@ -160,7 +168,9 @@ async def index_document(
     if not DocumentService(db).get_document(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    asyncio.get_event_loop().run_in_executor(_indexing_executor, _run_indexing_sync, document_id, chunking_strategy)
+    asyncio.get_event_loop().run_in_executor(
+        _indexing_executor, _run_indexing_sync, document_id, chunking_strategy
+    )
     return {"success": True, "message": "Indexing started", "document_id": document_id}
 
 
@@ -168,7 +178,7 @@ async def index_document(
 async def reindex_document(
     document_id: str,
     chunking_strategy: str = "PARAGRAPH",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Queue document reindexing in a thread."""
     try:
@@ -179,29 +189,59 @@ async def reindex_document(
     if not DocumentService(db).get_document(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    asyncio.get_event_loop().run_in_executor(_indexing_executor, _run_indexing_sync, document_id, chunking_strategy)
-    return {"success": True, "message": "Reindexing started", "document_id": document_id}
+    asyncio.get_event_loop().run_in_executor(
+        _indexing_executor, _run_indexing_sync, document_id, chunking_strategy
+    )
+    return {
+        "success": True,
+        "message": "Reindexing started",
+        "document_id": document_id,
+    }
 
 
 @router.get("/{document_id}/index/stream")
 async def stream_indexing_status(document_id: str):
-    """SSE stream emitting indexed status every 2s until indexed=true or timeout."""
+    """SSE stream emitting indexed status every 3s. Closes only on success or failure — no timeout."""
+
     async def event_generator():
-        for _ in range(60):  # max 2 minutes
+        from src.models.db_models import Request as RequestModel
+        from src.models.enums import RequestStatus
+
+        while True:
             tick_db = SessionLocal()
             try:
                 doc = DocumentService(tick_db).get_document(document_id)
                 if not doc:
                     yield f"data: {json.dumps({'error': 'Document not found'})}\n\n"
                     return
-                payload = {"document_id": document_id, "indexed": doc.indexed}
-                yield f"data: {json.dumps(payload)}\n\n"
                 if doc.indexed:
+                    yield f"data: {json.dumps({'document_id': document_id, 'indexed': True})}\n\n"
                     return
+                # Check if the latest indexing request failed
+                failed_request = (
+                    tick_db.query(RequestModel)
+                    .filter(
+                        RequestModel.document_id == doc.id,
+                        RequestModel.status == RequestStatus.FAILED,
+                    )
+                    .order_by(RequestModel.created_at.desc())
+                    .first()
+                )
+                if failed_request:
+                    yield f"data: {json.dumps({'document_id': document_id, 'indexed': False, 'error': failed_request.error_message or 'Indexing failed'})}\n\n"
+                    return
+                # Still running — emit progress
+                running_request = (
+                    tick_db.query(RequestModel)
+                    .filter(RequestModel.document_id == doc.id)
+                    .order_by(RequestModel.created_at.desc())
+                    .first()
+                )
+                progress = running_request.progress if running_request else 0
+                yield f"data: {json.dumps({'document_id': document_id, 'indexed': False, 'progress': progress})}\n\n"
             finally:
                 tick_db.close()
-            await asyncio.sleep(2)
-        yield f"data: {json.dumps({'document_id': document_id, 'indexed': False, 'timeout': True})}\n\n"
+            await asyncio.sleep(3)
 
     return StreamingResponse(
         event_generator(),
@@ -211,20 +251,17 @@ async def stream_indexing_status(document_id: str):
 
 
 @router.delete("/{document_id}")
-async def delete_document(
-    document_id: str,
-    db: Session = Depends(get_db)
-):
+async def delete_document(document_id: str, db: Session = Depends(get_db)):
     """Delete a document and its index"""
     try:
         document_service = DocumentService(db)
         success = document_service.delete_document(document_id)
-        
+
         if success:
             return {"success": True, "message": "Document deleted successfully"}
         else:
             raise HTTPException(status_code=404, detail="Document not found")
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -232,20 +269,17 @@ async def delete_document(
 
 
 @router.get("/{document_id}/index-info")
-async def get_document_index_info(
-    document_id: str,
-    db: Session = Depends(get_db)
-):
+async def get_document_index_info(document_id: str, db: Session = Depends(get_db)):
     """Get document indexing information"""
     try:
         pipeline = IndexingPipeline(db)
         index_info = pipeline.get_document_index_info(document_id)
-        
+
         if "error" in index_info:
             raise HTTPException(status_code=404, detail=index_info["error"])
-        
+
         return index_info
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -254,21 +288,19 @@ async def get_document_index_info(
 
 @router.get("/{document_id}/content")
 async def get_document_content(
-    document_id: str,
-    limit: int = 100,
-    db: Session = Depends(get_db)
+    document_id: str, limit: int = 100, db: Session = Depends(get_db)
 ):
     """Get document chunks/content"""
     try:
         pipeline = IndexingPipeline(db)
         chunks = pipeline.get_document_chunks(document_id, limit)
-        
+
         return {
             "document_id": document_id,
             "chunks": chunks,
-            "total_chunks": len(chunks)
+            "total_chunks": len(chunks),
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -278,45 +310,43 @@ async def search_documents(
     query: str,
     document_ids: Optional[List[str]] = None,
     top_k: int = 10,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Search across indexed documents"""
     try:
         pipeline = IndexingPipeline(db)
         results = pipeline.search_documents(query, document_ids, top_k)
-        
+
         return {
             "query": query,
             "document_ids": document_ids,
             "top_k": top_k,
             "results": results,
-            "total_results": len(results)
+            "total_results": len(results),
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.get("/{document_id}/download")
-async def download_document(
-    document_id: str,
-    db: Session = Depends(get_db)
-):
+async def download_document(document_id: str, db: Session = Depends(get_db)):
     """Download document file"""
     try:
         document_service = DocumentService(db)
         file_path = document_service.get_file_path(document_id)
-        
+
         if not file_path or not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Document file not found")
-        
+
         from fastapi.responses import FileResponse
+
         return FileResponse(
             path=file_path,
             filename=os.path.basename(file_path),
-            media_type='application/octet-stream'
+            media_type="application/octet-stream",
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -328,26 +358,22 @@ async def get_supported_document_types():
     """Get list of supported document types"""
     return {
         "supported_types": [
-            {
-                "type": "PDF",
-                "description": "PDF documents",
-                "extensions": [".pdf"]
-            },
+            {"type": "PDF", "description": "PDF documents", "extensions": [".pdf"]},
             {
                 "type": "DOCX",
                 "description": "Microsoft Word documents",
-                "extensions": [".docx"]
+                "extensions": [".docx"],
             },
             {
                 "type": "XLSX",
                 "description": "Microsoft Excel spreadsheets",
-                "extensions": [".xlsx"]
+                "extensions": [".xlsx"],
             },
             {
                 "type": "PPTX",
                 "description": "Microsoft PowerPoint presentations",
-                "extensions": [".pptx"]
-            }
+                "extensions": [".pptx"],
+            },
         ]
     }
 
@@ -360,22 +386,22 @@ async def get_chunking_strategies():
             {
                 "name": "FIXED_SIZE",
                 "description": "Fixed-size chunks with overlap",
-                "recommended_for": "General documents, predictable chunk sizes"
+                "recommended_for": "General documents, predictable chunk sizes",
             },
             {
                 "name": "SENTENCE",
                 "description": "Sentence-based chunking",
-                "recommended_for": "Legal documents, contracts, structured text"
+                "recommended_for": "Legal documents, contracts, structured text",
             },
             {
                 "name": "PARAGRAPH",
                 "description": "Paragraph-based chunking",
-                "recommended_for": "Articles, reports, narrative text"
+                "recommended_for": "Articles, reports, narrative text",
             },
             {
                 "name": "SEMANTIC",
                 "description": "Semantic boundary detection",
-                "recommended_for": "Complex documents, mixed content types"
-            }
+                "recommended_for": "Complex documents, mixed content types",
+            },
         ]
     }

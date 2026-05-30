@@ -359,6 +359,36 @@ async def evaluate_answers(request: EvaluationRequest, db: Session = Depends(get
             request.project_id, request.ground_truth_answers
         )
 
+        # Map to Pydantic schema fields if not already present
+        if "question_evaluations" in result and result["question_evaluations"]:
+            q_evals = result["question_evaluations"]
+
+            # Map question_scores
+            if not result.get("question_scores"):
+                result["question_scores"] = {
+                    str(ev.get("question_id")): ev.get("similarity_scores", {}).get(
+                        "combined", 0.0
+                    )
+                    for ev in q_evals
+                    if ev.get("question_id")
+                }
+
+            # Map detailed_comparison
+            if not result.get("detailed_comparison"):
+                result["detailed_comparison"] = [
+                    {
+                        "question_id": str(ev.get("question_id")),
+                        "similarity_score": ev.get("similarity_scores", {}).get(
+                            "combined", 0.0
+                        ),
+                        "ai_answer": ev.get("ai_answer"),
+                        "ground_truth": ev.get("ground_truth"),
+                        "status": ev.get("status"),
+                    }
+                    for ev in q_evals
+                    if ev.get("question_id")
+                ]
+
         return result
 
     except DueDiligenceException as e:

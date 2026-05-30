@@ -72,12 +72,32 @@ class AnswerGenerationService:
                 return self._create_no_context_answer(project_id, question_id, question)
 
             # Search for relevant chunks
+            print(f"\n=== [RAG SEARCH] Project UUID: {project_id} ===")
+            print(f"Question ID: {question_id}")
+            print(f'Question Text: "{question.text}"')
+            print(f"Scoped Document UUIDs: {document_ids}")
+
             relevant_chunks = vector_index_manager.search_across_documents(
                 document_ids=document_ids, query_text=question.text, top_k=5
             )
 
             if not relevant_chunks:
+                print(
+                    ">>> RESULT: No relevant chunks found in any scoped documents. Returning MISSING_DATA."
+                )
+                print("===========================================\n")
                 return self._create_no_context_answer(project_id, question_id, question)
+
+            print(f">>> RESULT: Found {len(relevant_chunks)} matching chunks:")
+            for rank, chunk in enumerate(relevant_chunks):
+                doc_name = chunk.get("metadata", {}).get("document_id", "Unknown Doc")
+                score = chunk.get("similarity_score", 0.0)
+                page = chunk.get("metadata", {}).get("page_number", "N/A")
+                snippet = chunk["text"][:120].replace("\n", " ")
+                print(
+                    f'  Rank {rank+1} | Sim: {score:.4f} | Doc: {doc_name} (Page {page}) | Snippet: "{snippet}..."'
+                )
+            print("===========================================\n")
 
             # Generate answer with citations
             llm_response = llm_service.generate_single_answer_with_citations(

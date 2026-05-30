@@ -73,11 +73,15 @@ class VectorIndexManager:
                             top_k: int = 5) -> List[Dict[str, Any]]:
         """Search for similar chunks within a document"""
         try:
+            # Generate the embedding using the local sentence transformer model
+            query_embedding = embedding_generator.generate_single_embedding(query_text)
+            
             collection_name = f"{self.collection_prefix}{document_id}"
             results = vector_store.query(
                 collection_name=collection_name,
                 query_text=query_text,
-                n_results=top_k
+                n_results=top_k,
+                query_embeddings=[query_embedding]
             )
             
             # Format results

@@ -207,6 +207,15 @@ class EvaluationRequest(BaseSchema):
 
 class EvaluationResponse(BaseSchema):
     overall_score: float
-    question_scores: Dict[str, float]
-    similarity_metrics: Dict[str, float]
-    detailed_comparison: List[Dict[str, Any]]
+    question_scores: Optional[Dict[str, float]] = None
+    similarity_metrics: Dict[str, Any]
+    detailed_comparison: Optional[List[Dict[str, Any]]] = None
+
+    # Additional fields returned by evaluation service
+    project_id: Optional[str] = None
+    avg_confidence: Optional[float] = None
+    total_questions: Optional[int] = None
+    evaluated_questions: Optional[int] = None
+    answerable_rate: Optional[float] = None
+    question_evaluations: Optional[List[Dict[str, Any]]] = None
+    evaluation_report: Optional[Dict[str, Any]] = None

@@ -14,7 +14,9 @@ export default function Navigation() {
   ]
 
   const isActive = (href: string) => {
-    if (href === '/projects') return location.pathname.startsWith('/projects')
+    if (href === '/projects') {
+      return location.pathname.startsWith('/projects') && !location.pathname.includes('/evaluation')
+    }
     if (href === '/evaluation') return location.pathname.includes('/evaluation')
     return location.pathname === href || location.pathname.startsWith(href + '/')
   }

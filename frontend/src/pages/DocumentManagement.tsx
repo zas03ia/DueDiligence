@@ -18,6 +18,7 @@ export default function DocumentManagement() {
   const [searchTerm, setSearchTerm] = useState('')
   const [fileTypeFilter, setFileTypeFilter] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  const [indexingIds, setIndexingIds] = useState<string[]>([])
 
   const {
     documents,
@@ -64,6 +65,7 @@ export default function DocumentManagement() {
         }
       }
 
+      setIndexingIds(prev => [...prev, doc.id])
       toast.loading('Indexing in background...', { id: 'upload' })
 
       const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -72,15 +74,21 @@ export default function DocumentManagement() {
         const data = JSON.parse(e.data)
         if (data.indexed) {
           es.close()
+          setIndexingIds(prev => prev.filter(id => id !== doc.id))
           fetchDocuments()
           setSelectedFile(prev => prev?.id === doc.id ? { ...prev, indexed: true } : prev)
           toast.success('Document uploaded and indexed', { id: 'upload' })
         } else if (data.timeout || data.error) {
           es.close()
+          setIndexingIds(prev => prev.filter(id => id !== doc.id))
           toast.error(data.error || 'Indexing timed out after upload', { id: 'upload' })
         }
       }
-      es.onerror = () => { es.close(); fetchDocuments() }
+      es.onerror = () => {
+        es.close()
+        setIndexingIds(prev => prev.filter(id => id !== doc.id))
+        fetchDocuments()
+      }
     } catch {
       toast.error('Upload failed', { id: 'upload' })
     }
@@ -101,7 +109,7 @@ export default function DocumentManagement() {
 
   const handleIndex = async (documentId: string, reindex = false) => {
     try {
-      toast.loading(reindex ? 'Re-indexing...' : 'Indexing document...', { id: 'index' })
+      setIndexingIds(prev => [...prev, documentId])
       if (reindex) await reindexDocument(documentId)
       else await indexDocument(documentId)
 
@@ -112,22 +120,25 @@ export default function DocumentManagement() {
         const data = JSON.parse(e.data)
         if (data.indexed) {
           es.close()
+          setIndexingIds(prev => prev.filter(id => id !== documentId))
           fetchDocuments()
           const fresh = useDocumentStore.getState().documents.find(d => d.id === documentId)
           if (fresh) setSelectedFile(prev => prev?.id === documentId ? fresh : prev)
-          toast.success(reindex ? 'Re-indexed successfully' : 'Indexed successfully', { id: 'index' })
+          toast.success(reindex ? 'Re-indexed successfully' : 'Indexed successfully')
         } else if (data.timeout || data.error) {
           es.close()
-          toast.error(data.error || 'Indexing timed out', { id: 'index' })
+          setIndexingIds(prev => prev.filter(id => id !== documentId))
+          toast.error(data.error || 'Indexing timed out')
         }
       }
       es.onerror = () => {
         es.close()
-        // Stream closed after completion is also an onerror — do a final fetch
+        setIndexingIds(prev => prev.filter(id => id !== documentId))
         fetchDocuments()
       }
     } catch {
-      toast.error('Indexing failed', { id: 'index' })
+      setIndexingIds(prev => prev.filter(id => id !== documentId))
+      toast.error('Indexing failed')
     }
   }
 
@@ -292,12 +303,28 @@ export default function DocumentManagement() {
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
                         {!document.indexed && (
-                          <Button size="sm" variant="outline" onClick={() => handleIndex(document.id)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleIndex(document.id)}
+                            disabled={indexingIds.includes(document.id)}
+                          >
+                            {indexingIds.includes(document.id) && (
+                              <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                            )}
                             Index
                           </Button>
                         )}
                         {document.indexed && (
-                          <Button size="sm" variant="outline" onClick={() => handleIndex(document.id, true)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleIndex(document.id, true)}
+                            disabled={indexingIds.includes(document.id)}
+                          >
+                            {indexingIds.includes(document.id) && (
+                              <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                            )}
                             Re-index
                           </Button>
                         )}
@@ -332,9 +359,28 @@ export default function DocumentManagement() {
             </dl>
             <div className="flex gap-2">
               {!selectedFile.indexed ? (
-                <Button size="sm" onClick={() => handleIndex(selectedFile.id)}>Index Document</Button>
+                <Button
+                  size="sm"
+                  onClick={() => handleIndex(selectedFile.id)}
+                  disabled={indexingIds.includes(selectedFile.id)}
+                >
+                  {indexingIds.includes(selectedFile.id) && (
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  )}
+                  Index Document
+                </Button>
               ) : (
-                <Button size="sm" variant="outline" onClick={() => handleIndex(selectedFile.id, true)}>Re-index</Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleIndex(selectedFile.id, true)}
+                  disabled={indexingIds.includes(selectedFile.id)}
+                >
+                  {indexingIds.includes(selectedFile.id) && (
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  )}
+                  Re-index
+                </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => downloadDocument(selectedFile.id)}>Download</Button>
               <Button size="sm" variant="destructive" onClick={() => handleDelete(selectedFile.id)}>Delete</Button>

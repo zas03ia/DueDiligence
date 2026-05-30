@@ -115,6 +115,7 @@ class EvaluationService:
             return {
                 "answer_id": str(answer.id),
                 "question_id": str(answer.question_id),
+                "question_text": answer.question.text if answer.question else "",
                 "ai_answer": ai_answer,
                 "manual_answer": manual_answer,
                 "ground_truth": ground_truth,

@@ -44,6 +44,7 @@ temp/
 backend/chroma_db/
 backend/embeddings_cache/
 backend/uploads/
+docker-compose.yml
 
 # Environment files
 .env
